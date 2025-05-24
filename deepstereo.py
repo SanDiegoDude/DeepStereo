@@ -11,8 +11,8 @@ from datetime import datetime # For unique output names
 import deeptexture 
 
 # Constants for stereogram generation (can be args later)
-MIN_SEPARATION_DEFAULT = 70
-MAX_SEPARATION_DEFAULT = 80
+MIN_SEPARATION_DEFAULT = 50
+MAX_SEPARATION_DEFAULT = 90
 
 # --- Stereogram Generation Function ---
 def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path, min_sep, max_sep):
