@@ -1,5 +1,5 @@
 import argparse
-from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageChops, ImageColor
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageChops, ImageColor, ImageEnhance
 import torch
 import numpy as np
 import cv2 # OpenCV for transformations
@@ -416,6 +416,7 @@ def main():
     texture_source_group.add_argument("--save_generated_texture", action="store_true", help="If true, saves the on-the-fly generated texture using default naming rules in --output_dir.")
     texture_source_group.add_argument("--tex_input_raw", action="store_true", help="For on-the-fly gen: use the (resized) texture base image directly, bypassing M1-M4 methods, before final transforms.")
     texture_source_group.add_argument("--tex_transform_input", type=str, default=None, help="Transform input image to dark colored texture using hex color (e.g., '#0000FF' for dark blue). Overrides other texture options.")
+    texture_source_group.add_argument("--tex_rand_noise", action="store_true", help="Use random RGB noise as texture (surprisingly effective!).")
     texture_source_group.add_argument("--tex_rotate", type=int, default=0, help="Rotate final texture by DEGREES (0-359). Applied after generation/loading.")
     texture_source_group.add_argument("--tex_grid", type=str, default="0,0", help="Create a ROWS,COLS grid from the final texture. E.g., '2,2'. Applied after rotate.")
     texture_source_group.add_argument("--tex_invert_colors", action="store_true", help="Invert colors of the final texture. Applied after grid.")
@@ -525,9 +526,27 @@ def main():
     texture_base_image_source_path = args.texture_base_image_path if args.texture_base_image_path else args.input
     texture_gen_suffix_part = "" # Suffix for texture generation steps
     final_transform_suffix_part = "" # Suffix for final texture transforms (rotate, grid, invert)
+
+    # Check if user wants random noise texture
+    if args.tex_rand_noise:
+        print("Creating random RGB noise texture...")
+        w_noise, h_noise = generated_depth_map_pil.size
+        noise_data = np.random.randint(0, 256, (h_noise, w_noise, 3), dtype=np.uint8)
+        texture_to_use_pil = Image.fromarray(noise_data)
+        texture_gen_suffix_part = "_texRandNoise"
+        
+        # Save if requested
+        if args.save_generated_texture and texture_to_use_pil:
+            gen_tex_filename = f"{output_filename_base}{texture_gen_suffix_part}_gentex_{timestamp}.png"
+            gen_tex_save_path = os.path.join(args.output_dir, gen_tex_filename)
+            try:
+                texture_to_use_pil.save(gen_tex_save_path)
+                print(f"Saved random noise texture to {gen_tex_save_path}")
+            except Exception as e:
+                print(f"Error saving random noise texture: {e}")
     
     # Check if user wants to transform input to texture
-    if args.tex_transform_input:
+    elif args.tex_transform_input:
         print(f"Creating texture from transformed input with color {args.tex_transform_input}...")
         try:
             # Load the texture base image
