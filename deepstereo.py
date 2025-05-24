@@ -2,6 +2,7 @@ import argparse
 from PIL import Image, ImageOps
 import torch
 import numpy as np
+import tqdm
 import cv2 # OpenCV for transformations
 import os # For path operations
 from datetime import datetime # For unique output names
