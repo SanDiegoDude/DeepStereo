@@ -106,61 +106,54 @@ def generate_stereogram_improved_texture(depth_map_pil, texture_pil, output_path
     wallpaper_pixels = wallpaper_img.load()
     output_pixels = stereogram_img.load()
 
-    # Alternative algorithm: Random dot placement with constraint satisfaction
-    # This creates a more organic texture flow similar to Magic Eye books
-    
+    # True Magic Eye algorithm with continuous texture flow
     for y in tqdm(range(height), desc="Stereogram Rows (Alt Algo)", leave=False):
-        # Track which pixels have been assigned
+        # For each row, we'll build a constraint graph and solve it
+        # to maintain maximum texture continuity
+        
+        # First, identify all the constraints
+        constraints = []
+        for x in range(width):
+            depth_value_normalized = depth_pixels[x, y] / 255.0
+            current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
+            current_separation = max(1, current_separation)
+            
+            if x >= current_separation:
+                # x must match x - current_separation
+                constraints.append((x - current_separation, x))
+        
+        # Now assign colors while maintaining continuity
         assigned = [False] * width
         
-        # First pass: place random dots from texture at unconstrained positions
+        # Start from the left and propagate rightward
         for x in range(width):
             if not assigned[x]:
-                depth_value_normalized = depth_pixels[x, y] / 255.0
-                current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
-                current_separation = max(1, current_separation)
+                # Find all pixels that must have the same color as x
+                same_color_group = set([x])
+                to_process = [x]
                 
-                # Check if this pixel can be freely assigned
-                left_partner = x - current_separation
-                right_partner = x + current_separation
+                while to_process:
+                    current = to_process.pop()
+                    # Find all constraints involving current
+                    for (a, b) in constraints:
+                        if a == current and b not in same_color_group:
+                            same_color_group.add(b)
+                            to_process.append(b)
+                        elif b == current and a not in same_color_group:
+                            same_color_group.add(a)
+                            to_process.append(a)
                 
-                can_assign = True
-                if left_partner >= 0 and assigned[left_partner]:
-                    # Must match left partner
-                    output_pixels[x, y] = output_pixels[left_partner, y]
-                    assigned[x] = True
-                    can_assign = False
+                # Assign color to the entire group
+                # Use the leftmost pixel's position for texture lookup
+                # This maintains continuity
+                leftmost = min(same_color_group)
+                wp_x = leftmost % wallpaper_width
+                wp_y = y % wallpaper_height
+                color = wallpaper_pixels[wp_x, wp_y]
                 
-                if can_assign and right_partner < width and assigned[right_partner]:
-                    # Must match right partner
-                    output_pixels[x, y] = output_pixels[right_partner, y]
-                    assigned[x] = True
-                    can_assign = False
-                
-                if can_assign:
-                    # Free to choose - use texture with some randomization
-                    # This creates the "organic" Magic Eye texture
-                    texture_offset = (x * 7 + y * 13) % 17  # Pseudo-random offset
-                    wp_x = (x + texture_offset) % wallpaper_width
-                    wp_y = y % wallpaper_height
-                    output_pixels[x, y] = wallpaper_pixels[wp_x, wp_y]
-                    assigned[x] = True
-        
-        # Second pass: propagate constraints to ensure all pixels are assigned
-        for x in range(width):
-            if not assigned[x]:
-                depth_value_normalized = depth_pixels[x, y] / 255.0
-                current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
-                current_separation = max(1, current_separation)
-                
-                left_partner = x - current_separation
-                if left_partner >= 0:
-                    output_pixels[x, y] = output_pixels[left_partner, y]
-                else:
-                    # Fallback to texture
-                    wp_x = x % wallpaper_width
-                    wp_y = y % wallpaper_height
-                    output_pixels[x, y] = wallpaper_pixels[wp_x, wp_y]
+                for px in same_color_group:
+                    output_pixels[px, y] = color
+                    assigned[px] = True
     
     try:
         stereogram_img.save(output_path)
