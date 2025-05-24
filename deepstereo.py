@@ -56,7 +56,7 @@ def apply_texture_transforms(image_pil, rotate_degrees=0, grid_rows=0, grid_cols
     return transformed_image, transform_suffix
 
 # --- Input Transform Function ---
-def transform_input_for_texture(image_pil, hex_color, darken_factor=0.3, blur_radius=5, verbose=True):
+def transform_input_for_texture(image_pil, hex_color, darken_factor=0.7, blur_radius=5, verbose=True):
     """
     Transform the input image into a texture by:
     1. Converting to grayscale
