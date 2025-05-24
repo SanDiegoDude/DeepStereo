@@ -1,0 +1,10 @@
+
+**2. `requirements.txt`**
+
+```text
+torch
+torchvision
+torchaudio
+opencv-python
+Pillow
+timm
