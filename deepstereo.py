@@ -106,54 +106,30 @@ def generate_stereogram_improved_texture(depth_map_pil, texture_pil, output_path
     wallpaper_pixels = wallpaper_img.load()
     output_pixels = stereogram_img.load()
 
-    # True Magic Eye algorithm with continuous texture flow
+    # Pre-process texture if needed
+    avg_sep = (min_sep + max_sep) // 2
+    effective_texture_width = min(wallpaper_width, avg_sep * 2)  # Use more texture by limiting repeat zone
+    
     for y in tqdm(range(height), desc="Stereogram Rows (Alt Algo)", leave=False):
-        # For each row, we'll build a constraint graph and solve it
-        # to maintain maximum texture continuity
+        # Shift texture start position per row to use more of the texture
+        row_offset = (y * 17) % effective_texture_width  # Prime number for better distribution
         
-        # First, identify all the constraints
-        constraints = []
         for x in range(width):
             depth_value_normalized = depth_pixels[x, y] / 255.0
             current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
             current_separation = max(1, current_separation)
             
-            if x >= current_separation:
-                # x must match x - current_separation
-                constraints.append((x - current_separation, x))
-        
-        # Now assign colors while maintaining continuity
-        assigned = [False] * width
-        
-        # Start from the left and propagate rightward
-        for x in range(width):
-            if not assigned[x]:
-                # Find all pixels that must have the same color as x
-                same_color_group = set([x])
-                to_process = [x]
-                
-                while to_process:
-                    current = to_process.pop()
-                    # Find all constraints involving current
-                    for (a, b) in constraints:
-                        if a == current and b not in same_color_group:
-                            same_color_group.add(b)
-                            to_process.append(b)
-                        elif b == current and a not in same_color_group:
-                            same_color_group.add(a)
-                            to_process.append(a)
-                
-                # Assign color to the entire group
-                # Use the leftmost pixel's position for texture lookup
-                # This maintains continuity
-                leftmost = min(same_color_group)
-                wp_x = leftmost % wallpaper_width
+            constraint_x = x - current_separation
+            
+            if constraint_x >= 0:
+                # Must match constraint
+                output_pixels[x, y] = output_pixels[constraint_x, y]
+            else:
+                # Free pixel - use shifted texture
+                texture_x = (x + row_offset) % effective_texture_width
+                wp_x = texture_x % wallpaper_width
                 wp_y = y % wallpaper_height
-                color = wallpaper_pixels[wp_x, wp_y]
-                
-                for px in same_color_group:
-                    output_pixels[px, y] = color
-                    assigned[px] = True
+                output_pixels[x, y] = wallpaper_pixels[wp_x, wp_y]
     
     try:
         stereogram_img.save(output_path)
