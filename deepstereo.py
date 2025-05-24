@@ -12,8 +12,8 @@ import deeptexture
 
 # Constants for stereogram generation (can be args later)
 # Let's try a wider range for more depth "resolution"
-MIN_SEPARATION_DEFAULT = 50  # Smaller value for furthest points
-MAX_SEPARATION_DEFAULT = 120 # Larger value for closest, giving a range of 40 pixels
+MIN_SEPARATION_DEFAULT = 20  # Smaller value for furthest points
+MAX_SEPARATION_DEFAULT = 200 # Larger value for closest, giving a range of 40 pixels
 
 # --- Stereogram Generation Function ---
 # (generate_stereogram_from_pil_texture - no change needed here from last version, tqdm was added to its loop)
