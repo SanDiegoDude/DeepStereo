@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import cv2 # OpenCV for transformations
 import os # For path operations
-from datetime import datetime # For unique output names if needed
+from datetime import datetime # For unique output names
 
 # Import the refactored texture generation module
 import deeptexture 
@@ -14,15 +14,9 @@ MIN_SEPARATION_DEFAULT = 70
 MAX_SEPARATION_DEFAULT = 80
 
 # --- Stereogram Generation Function ---
-# IMPORTANT: Modified to accept texture_pil (PIL.Image) instead of texture_path
 def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path, min_sep, max_sep):
-    """
-    Generates a single image stereogram (autostereogram) from a PIL Image depth map
-    and a PIL Image texture.
-    """
     try:
         depth_map_img = depth_map_pil.convert('L')
-        # Texture is already a PIL image, ensure it's RGB for consistency
         texture_img = texture_pil.convert('RGB')
     except Exception as e:
         print(f"Error preparing images for stereogram: {e}")
@@ -30,21 +24,17 @@ def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path
 
     width, height = depth_map_img.size
     texture_width, texture_height = texture_img.size
-
     stereogram_img = Image.new('RGB', (width, height))
-
     depth_pixels = depth_map_img.load()
     texture_pixels = texture_img.load()
     output_pixels = stereogram_img.load()
 
-    print(f"Generating stereogram ({width}x{height})...")
-
+    # print(f"Generating stereogram ({width}x{height})...") # Moved to main for less clutter
     for y in tqdm(range(height), desc="Stereogram Rows", leave=False):
         for x in range(width):
             depth_value_normalized = depth_pixels[x, y] / 255.0
             current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
             current_separation = max(1, current_separation) 
-
             if x < current_separation:
                 tx = x % texture_width
                 ty = y % texture_height
@@ -55,7 +45,6 @@ def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path
     
     try:
         stereogram_img.save(output_path)
-        # print(f"Stereogram saved to {output_path}") # Main will print final summary
         return True
     except Exception as e:
         print(f"Error saving output stereogram: {e}")
@@ -63,17 +52,19 @@ def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path
 
 # --- Depth Map Generation Function ---
 def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_size=None, verbose=True):
-    """
-    Creates a depth map from an input image using MiDaS.
-    Returns a PIL Image (depth map) and the PIL image that was processed by MiDaS (potentially resized).
-    """
     if verbose: print(f"Depth Map Gen: Loading MiDaS model ({model_type})...")
     try:
-        # Forcing trust_repo for transforms as it's sometimes needed
         model = torch.hub.load("intel-isl/MiDaS", model_type, trust_repo=True)
-        transform_hub_path = "intel-isl/MiDaS" 
-        transform_name = "dpt_transform" if "DPT" in model_type else "small_transform"
-        transform = torch.hub.load(transform_hub_path, "transforms", trust_repo=True)[transform_name]
+        
+        # More robust transform loading
+        midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
+        if model_type == "DPT_Large" or model_type == "DPT_Hybrid":
+            transform = midas_transforms.dpt_transform
+        elif model_type == "MiDaS_small":
+            transform = midas_transforms.small_transform
+        else: # Fallback or choose a default if model_type is unexpected
+            print(f"Warning: Unknown MiDaS model type '{model_type}' for transform selection. Using small_transform.")
+            transform = midas_transforms.small_transform
 
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         model.to(device); model.eval()
@@ -81,7 +72,7 @@ def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_siz
 
         if verbose: print(f"Depth Map Gen: Loading and transforming input image: {image_path}")
         img_pil_orig = Image.open(image_path).convert("RGB")
-        img_for_midas_processing = img_pil_orig.copy() # Start with a copy
+        img_for_midas_processing = img_pil_orig.copy()
 
         if target_size:
             if verbose: print(f"Depth Map Gen: Resizing input for MiDaS to {target_size}...")
@@ -104,16 +95,14 @@ def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_siz
         depth_map_visual = (depth_inverted_normalized * 255).astype(np.uint8)
         depth_map_pil = Image.fromarray(depth_map_visual)
 
-        # Resize depth map back to original dimensions of the *initial input*
         if depth_map_pil.size != img_pil_orig.size:
             if verbose: print(f"Depth Map Gen: Resizing depth map from {depth_map_pil.size} back to original image size: {img_pil_orig.size}")
             depth_map_pil = depth_map_pil.resize(img_pil_orig.size, Image.Resampling.LANCZOS)
         
         if verbose: print("Depth Map Gen: Depth map generated successfully.")
-        return depth_map_pil, img_pil_orig # Return original for texture base consistency if needed
+        return depth_map_pil, img_pil_orig 
     except Exception as e:
         print(f"Error during depth map generation: {e}"); return None, None
-
 
 # --- Main Execution ---
 def main():
@@ -123,31 +112,30 @@ def main():
     # Stereogram Args
     stereo_group = parser.add_argument_group('Stereogram Generation Parameters')
     stereo_group.add_argument("--input", required=True, help="Path to the input color image (for depth and optionally texture base).")
-    stereo_group.add_argument("--output", required=True, help="Path for the output stereogram image.")
+    stereo_group.add_argument("--output_dir", default="output_stereograms", help="Directory to save the generated stereogram image.")
+    stereo_group.add_argument("--output_filename_base", default=None, help="Optional base for output filename. If None, uses input filename base.")
     stereo_group.add_argument("--minsep", type=int, default=MIN_SEPARATION_DEFAULT, help="Min separation for far points (pixels).")
     stereo_group.add_argument("--maxsep", type=int, default=MAX_SEPARATION_DEFAULT, help="Max separation for near points (pixels).")
 
     # Depth Map Args
     depth_group = parser.add_argument_group('Depth Map Generation (MiDaS)')
     depth_group.add_argument("--midasmodel", default="MiDaS_small", choices=["MiDaS_small", "DPT_Large", "DPT_Hybrid"], help="MiDaS model for depth estimation.")
-    depth_group.add_argument("--save_depthmap", type=str, default=None, help="Optional: Path to save the AI-generated grayscale depth map.")
+    depth_group.add_argument("--save_depthmap", type=str, default=None, help="Optional: Path to save the AI-generated grayscale depth map (full path including filename).")
     depth_group.add_argument("--depth_model_input_width", type=int, default=384, help="Width to resize input image to before MiDaS (maintains aspect, rounded to 32px). 0 for no resize.")
 
     # Texture Args
     texture_source_group = parser.add_argument_group('Texture Source')
-    texture_source_group.add_argument("--texture", default=None, help="Path to an external texture image. If not provided, --generate_texture_on_the_fly must be used or a default random texture is created.")
-    texture_source_group.add_argument("--generate_texture_on_the_fly", action="store_true", help="Generate texture on-the-fly using the main input image as a base. Overrides --texture if both specified.")
-    texture_source_group.add_argument("--save_generated_texture", type=str, default=None, help="Optional: Path to save the on-the-fly generated texture image.")
-
+    texture_source_group.add_argument("--texture", default=None, help="Path to an external texture image. If not provided or overridden, --generate_texture_on_the_fly is used.")
+    texture_source_group.add_argument("--generate_texture_on_the_fly", action="store_true", help="Generate texture on-the-fly using the main input image as a base. Overrides --texture if specified.")
+    texture_source_group.add_argument("--save_generated_texture", type=str, default=None, help="Optional: Path to save the on-the-fly generated texture image (full path including filename).")
 
     # On-the-fly Texture Generation Args (from deeptexture.py, prefixed with tex_)
     tex_gen_group = parser.add_argument_group('On-the-fly Texture Generation Parameters (used if --generate_texture_on_the_fly)')
-    tex_gen_group.add_argument("--tex_max_megapixels", type=float, default=1.0, help="Resize base image for texture to approx this MP (default: 1.0). 0 for no resize.")
+    tex_gen_group.add_argument("--tex_max_megapixels", type=float, default=1.0, help="Resize base image for texture to approx this MP. 0 for no resize.")
     tex_gen_group.add_argument("--tex_combination_mode", choices=["sequential", "blend"], default="sequential", help="Texture: How to combine method outputs.")
     tex_gen_group.add_argument("--tex_blend_type", choices=["average", "lighten", "darken", "multiply", "screen", "add", "difference", "overlay"], default="overlay", help="Texture: Blend mode.")
     tex_gen_group.add_argument("--tex_blend_opacity", type=float, default=1.0, help="Texture: Blend opacity (0.0-1.0).")
     
-    # Method 1 Args
     tex_m1_group = tex_gen_group.add_argument_group('Texture Method 1: Color Dots')
     tex_m1_group.add_argument("--tex_method1_color_dots", action="store_true", help="Texture M1: Apply.")
     tex_m1_group.add_argument("--tex_m1_density", type=float, default=0.7, help="Texture M1: Dot density.")
@@ -156,9 +144,9 @@ def main():
     tex_m1_group.add_argument("--tex_m1_color_mode", choices=["content_pixel", "random_rgb", "random_from_palette", "transformed_hue", "transformed_invert"], default="content_pixel", help="Texture M1: Color mode.")
     tex_m1_group.add_argument("--tex_m1_hue_shift_degrees", type=float, default=90, help="Texture M1: Hue shift.")
     
-    # Method 2 Args
     tex_m2_group = tex_gen_group.add_argument_group('Texture Method 2: Density/Size Driven')
     tex_m2_group.add_argument("--tex_method2_density_size", action="store_true", help="Texture M2: Apply.")
+    # ... (all other tex_m2, tex_m3, tex_m4 args from previous version)
     tex_m2_group.add_argument("--tex_m2_mode", choices=["density", "size"], default="density", help="Texture M2: Mode.")
     tex_m2_group.add_argument("--tex_m2_element_color", type=str, default="white", help="Texture M2: Element color.")
     tex_m2_group.add_argument("--tex_m2_bg_color", type=str, default="black", help="Texture M2: BG color.")
@@ -167,14 +155,12 @@ def main():
     tex_m2_group.add_argument("--tex_m2_invert_influence", action="store_true", help="Texture M2: Invert influence.")
     tex_m2_group.add_argument("--tex_m2_density_factor", type=float, default=1.0, help="Texture M2: Density factor.")
 
-    # Method 3 Args
     tex_m3_group = tex_gen_group.add_argument_group('Texture Method 3: Voronoi')
     tex_m3_group.add_argument("--tex_method3_voronoi", action="store_true", help="Texture M3: Apply.")
     tex_m3_group.add_argument("--tex_m3_num_points", type=int, default=200, help="Texture M3: Num points.")
     tex_m3_group.add_argument("--tex_m3_metric", choices=["F1", "F2", "F2-F1"], default="F1", help="Texture M3: Metric.")
     tex_m3_group.add_argument("--tex_m3_color_source", choices=["distance", "content_point_color", "voronoi_cell_content_color"], default="distance", help="Texture M3: Color source.")
 
-    # Method 4 Args
     tex_m4_group = tex_gen_group.add_argument_group('Texture Method 4: Glyph Dither')
     tex_m4_group.add_argument("--tex_method4_glyph_dither", action="store_true", help="Texture M4: Apply.")
     tex_m4_group.add_argument("--tex_m4_num_colors", type=int, default=8, help="Texture M4: Num colors for quantization.")
@@ -182,98 +168,151 @@ def main():
     tex_m4_group.add_argument("--tex_m4_glyph_style", choices=["random_dots", "lines", "circles", "solid"], default="random_dots", help="Texture M4: Glyph style.")
     tex_m4_group.add_argument("--tex_m4_use_quantized_color_for_glyph_element", action="store_true", help="Texture M4: Use quantized color for glyph elements.")
 
-    args = parser.parse_args()
 
+    args = parser.parse_args()
     print("--- DeepStereo Generator ---")
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir, exist_ok=True)
+        print(f"Created output directory: {args.output_dir}")
 
     if args.minsep >= args.maxsep: print("Error: --minsep must be less than --maxsep."); return
 
-    # Determine target size for MiDaS model input
+    # Filename generation
+    input_filename_base = os.path.splitext(os.path.basename(args.input))[0]
+    output_filename_base = args.output_filename_base if args.output_filename_base else input_filename_base
+    
+    filename_suffix = ""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Determine target size for MiDaS
     target_midas_processing_size = None
     if args.depth_model_input_width and args.depth_model_input_width > 0:
         try:
-            with Image.open(args.input) as temp_img: # Ensure file is closed
-                orig_w, orig_h = temp_img.size
+            with Image.open(args.input) as temp_img: orig_w, orig_h = temp_img.size
             aspect_ratio = orig_h / orig_w
             target_w_midas = (args.depth_model_input_width // 32) * 32
             target_h_midas = (int(target_w_midas * aspect_ratio) // 32) * 32
-            if target_w_midas > 0 and target_h_midas > 0:
-                target_midas_processing_size = (target_w_midas, target_h_midas)
-            else: print(f"Warning: Calculated MiDaS processing size invalid. Using original size for depth map.")
-        except Exception as e: print(f"Warning: Could not get input image size for MiDaS resize. Error: {e}. Using original size for depth map.")
+            if target_w_midas > 0 and target_h_midas > 0: target_midas_processing_size = (target_w_midas, target_h_midas)
+            else: print(f"Warning: Calculated MiDaS processing size invalid. Using original size.")
+        except Exception as e: print(f"Warning: Could not get input image size for MiDaS resize. Error: {e}.")
     
-    # 1. Create depth map from input image
-    # create_depth_map_from_image now returns (depth_map_pil, original_input_pil_for_texture_base)
     generated_depth_map_pil, original_input_pil_for_texture_base = create_depth_map_from_image(
-                                                                        args.input, 
-                                                                        model_type=args.midasmodel,
-                                                                        target_size=target_midas_processing_size
-                                                                    )
+        args.input, model_type=args.midasmodel, target_size=target_midas_processing_size
+    )
 
     if not generated_depth_map_pil: print("Could not generate depth map. Exiting."); return
+    
+    # Add MiDaS model to suffix
+    filename_suffix += f"_{args.midasmodel}"
+    if target_midas_processing_size:
+        filename_suffix += f"_depth{args.depth_model_input_width}w"
+
+
     if args.save_depthmap:
-        try: generated_depth_map_pil.save(args.save_depthmap); print(f"Generated depth map saved to {args.save_depthmap}")
+        depthmap_save_path = args.save_depthmap
+        # If save_depthmap is a directory, create a filename
+        if os.path.isdir(args.save_depthmap) or not os.path.splitext(args.save_depthmap)[1]:
+             depthmap_filename = f"{output_filename_base}{filename_suffix}_depthmap_{timestamp}.png"
+             depthmap_save_path = os.path.join(args.save_depthmap if os.path.isdir(args.save_depthmap) else args.output_dir, depthmap_filename)
+        try: 
+            os.makedirs(os.path.dirname(depthmap_save_path), exist_ok=True)
+            generated_depth_map_pil.save(depthmap_save_path); print(f"Generated depth map saved to {depthmap_save_path}")
         except Exception as e: print(f"Error saving generated depth map: {e}")
 
-    # 2. Prepare Texture
+    # Prepare Texture
     texture_to_use_pil = None
-    texture_base_image_pil = None # This will be the image used as input for deeptexture
+    texture_base_image_pil = None
+    texture_gen_suffix_part = ""
 
-    if args.generate_texture_on_the_fly:
+    # Determine if on-the-fly texture generation is primary
+    use_on_the_fly_texture = args.generate_texture_on_the_fly
+    if not args.generate_texture_on_the_fly and not args.texture:
+        print("Neither --texture file nor --generate_texture_on_the_fly specified. Defaulting to on-the-fly generation.")
+        use_on_the_fly_texture = True
+
+
+    if use_on_the_fly_texture:
         print("Preparing for on-the-fly texture generation...")
         if original_input_pil_for_texture_base:
-            texture_base_image_pil = original_input_pil_for_texture_base.copy() # Use the original input
-        else: # Should not happen if depth map gen succeeded
+            texture_base_image_pil = original_input_pil_for_texture_base.copy()
+        else:
             try: texture_base_image_pil = Image.open(args.input).convert("RGB") 
             except Exception as e: print(f"Error loading base image for texture gen: {e}"); texture_base_image_pil = None
         
         if texture_base_image_pil:
-            # Pass the 'args' object directly to deeptexture's core function
-            # It will know to look for 'tex_' prefixed attributes
-            texture_to_use_pil = deeptexture.generate_texture_from_config(
-                texture_base_image_pil,
-                args, # Pass the main args object from deepstereo
-                verbose=True
-            )
+            # Build texture_gen_suffix_part based on tex_args
+            if args.tex_max_megapixels > 0:
+                # Quick check if resize will actually happen (approx)
+                w_tex_base, h_tex_base = texture_base_image_pil.size
+                if (w_tex_base * h_tex_base) / 1_000_000.0 > args.tex_max_megapixels:
+                     texture_gen_suffix_part += f"_texResize{args.tex_max_megapixels:.1f}MP"
+
+            if args.tex_method1_color_dots: texture_gen_suffix_part += "_texM1"
+            if args.tex_method2_density_size: texture_gen_suffix_part += "_texM2"
+            if args.tex_method3_voronoi: texture_gen_suffix_part += "_texM3"
+            if args.tex_method4_glyph_dither: texture_gen_suffix_part += "_texM4"
+            
+            active_tex_methods = sum([
+                args.tex_method1_color_dots, args.tex_method2_density_size,
+                args.tex_method3_voronoi, args.tex_method4_glyph_dither
+            ])
+
+            if active_tex_methods > 0: # Only call generate_texture_from_config if methods are selected
+                if active_tex_methods > 1 and args.tex_combination_mode == 'blend':
+                    texture_gen_suffix_part += f"_blend{args.tex_blend_type[0].upper()}" # e.g. _blendO for overlay
+                
+                texture_to_use_pil = deeptexture.generate_texture_from_config(
+                    texture_base_image_pil, args, verbose=True
+                )
+            elif not texture_gen_suffix_part: # No methods, no resize for texture
+                 print("No texture generation methods or resize selected for on-the-fly. Using input image as texture base directly.")
+                 texture_to_use_pil = texture_base_image_pil # Use the (potentially tex_max_mp resized) base
+            else: # Only tex_resize was active
+                 texture_to_use_pil = deeptexture.resize_to_megapixels(texture_base_image_pil, args.tex_max_megapixels)
+
+
             if args.save_generated_texture and texture_to_use_pil:
-                try: texture_to_use_pil.save(args.save_generated_texture); print(f"Saved on-the-fly generated texture to {args.save_generated_texture}")
+                gen_tex_save_path = args.save_generated_texture
+                if os.path.isdir(args.save_generated_texture) or not os.path.splitext(args.save_generated_texture)[1]:
+                    gen_tex_filename = f"{output_filename_base}{filename_suffix}{texture_gen_suffix_part}_gentex_{timestamp}.png"
+                    gen_tex_save_path = os.path.join(args.save_generated_texture if os.path.isdir(args.save_generated_texture) else args.output_dir, gen_tex_filename)
+                try: 
+                    os.makedirs(os.path.dirname(gen_tex_save_path), exist_ok=True)
+                    texture_to_use_pil.save(gen_tex_save_path); print(f"Saved on-the-fly generated texture to {gen_tex_save_path}")
                 except Exception as e: print(f"Error saving generated texture: {e}")
         else:
             print("Could not prepare base image for on-the-fly texture generation.")
+    
+    filename_suffix += texture_gen_suffix_part # Add texture gen details to main suffix
 
-    if texture_to_use_pil is None: # If not generated, or generation failed
-        if args.texture:
+
+    if texture_to_use_pil is None:
+        if args.texture: # Fallback to --texture file if on-the-fly failed or wasn't primary
             try:
                 print(f"Loading texture from file: {args.texture}")
                 texture_to_use_pil = Image.open(args.texture).convert('RGB')
+                filename_suffix += "_fileTex" # Indicate file texture was used
             except FileNotFoundError: print(f"Error: Texture file '{args.texture}' not found."); return
             except Exception as e: print(f"Error opening texture file: {e}"); return
-        else:
-            print("Error: No texture source. Provide --texture or use --generate_texture_on_the_fly with methods.")
-            print("Creating a default random noise texture as fallback.")
-            # Use depth map size for default texture, or a fixed size if depth map also failed (though we exit earlier)
-            w_fallback, h_fallback = generated_depth_map_pil.size if generated_depth_map_pil else (512,512)
-            noise_data = np.random.randint(0, 256, (h_fallback, w_fallback, 3), dtype=np.uint8)
+        else: # Final fallback: default random noise
+            print("Warning: No texture source defined or successfully generated. Creating default random noise texture.")
+            w_fb, h_fb = generated_depth_map_pil.size; noise_data = np.random.randint(0, 256, (h_fb, w_fb, 3), dtype=np.uint8)
             texture_to_use_pil = Image.fromarray(noise_data)
+            filename_suffix += "_randomTex"
 
-    if not texture_to_use_pil: print("Critical error: Texture could not be loaded or generated. Exiting."); return
+    if not texture_to_use_pil: print("Critical error: Texture could not be prepared. Exiting."); return
 
-    # 3. Generate Stereogram
-    print("Proceeding to stereogram generation...")
-    output_dir = os.path.dirname(args.output)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
-        print(f"Created output directory for stereogram: {output_dir}")
+    # Construct final output path for stereogram
+    final_stereogram_filename = f"{output_filename_base}{filename_suffix}_{timestamp}.png" # Ensure .png
+    final_stereogram_path = os.path.join(args.output_dir, final_stereogram_filename)
 
-    success = generate_stereogram_from_pil_texture( # Use the renamed function
-        generated_depth_map_pil,
-        texture_to_use_pil,
-        args.output,
-        args.minsep,
-        args.maxsep
+
+    print(f"Proceeding to stereogram generation. Output will be: {final_stereogram_path}")
+    success = generate_stereogram_from_pil_texture(
+        generated_depth_map_pil, texture_to_use_pil, final_stereogram_path, args.minsep, args.maxsep
     )
 
-    if success: print(f"DeepStereo generation complete! Output: {args.output}")
+    if success: print(f"DeepStereo generation complete! Output: {final_stereogram_path}")
     else: print("DeepStereo generation failed.")
 
 if __name__ == "__main__":
