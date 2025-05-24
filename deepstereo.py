@@ -6,6 +6,7 @@ import cv2 # OpenCV for transformations
 import os # For path operations
 from datetime import datetime # For unique output names
 from tqdm import tqdm 
+import random
 
 import deeptexture # Import the refactored texture generation module
 
@@ -16,7 +17,6 @@ MAX_SEPARATION_DEFAULT = 100
 verbose_main = True # Global for now, can be tied to a --verbose flag
 
 # --- Texture Transform Functions ---
-# (apply_texture_transforms - unchanged from previous version)
 def apply_texture_transforms(image_pil, rotate_degrees=0, grid_rows=0, grid_cols=0, invert_colors=False):
     transformed_image = image_pil.copy()
     transform_suffix = ""
@@ -55,6 +55,41 @@ def apply_texture_transforms(image_pil, rotate_degrees=0, grid_rows=0, grid_cols
         transform_suffix += "_invC"
     return transformed_image, transform_suffix
 
+# --- Texture Preprocessing Function ---
+def prepare_texture_for_stereogram(texture_pil, min_sep, max_sep, verbose=True):
+    """
+    Pre-processes texture to tile seamlessly at the average separation distance.
+    This helps reduce visible repetition artifacts.
+    """
+    avg_sep = (min_sep + max_sep) // 2
+    texture_width, texture_height = texture_pil.size
+    
+    if texture_width <= avg_sep:
+        if verbose: print(f"Warning: Texture width ({texture_width}) is smaller than average separation ({avg_sep}). Stereogram will show heavy repetition.")
+        return texture_pil
+    
+    # Create a new texture that tiles at avg_sep interval
+    new_width = avg_sep
+    new_texture = Image.new('RGB', (new_width, texture_height))
+    
+    # Use only the first avg_sep pixels, but blend the edges for seamless tiling
+    blend_width = min(20, avg_sep // 4)  # Blend zone width
+    
+    for y in range(texture_height):
+        for x in range(new_width):
+            if x < new_width - blend_width:
+                # Direct copy
+                new_texture.putpixel((x, y), texture_pil.getpixel((x, y)))
+            else:
+                # Blend zone - fade between end and beginning
+                blend_factor = (x - (new_width - blend_width)) / blend_width
+                color1 = texture_pil.getpixel((x, y))
+                color2 = texture_pil.getpixel((x - new_width, y))
+                blended = tuple(int(c1 * (1 - blend_factor) + c2 * blend_factor) for c1, c2 in zip(color1, color2))
+                new_texture.putpixel((x, y), blended)
+    
+    if verbose: print(f"Pre-processed texture to tile at {new_width}px intervals")
+    return new_texture
 
 # --- Stereogram Generation Function (Original/Standard Algorithm) ---
 def generate_stereogram_standard_texture(depth_map_pil, texture_pil, output_path, min_sep, max_sep):
@@ -138,8 +173,97 @@ def generate_stereogram_improved_texture(depth_map_pil, texture_pil, output_path
         print(f"Error saving output stereogram (improved): {e}")
         return False
 
+# --- Stereogram Generation Function (Layered Texture Algorithm with Preprocessing) ---
+def generate_stereogram_layered_texture(depth_map_pil, texture_pil, output_path, min_sep, max_sep):
+    try:
+        depth_map_img = depth_map_pil.convert('L')
+        # Pre-process the texture to tile seamlessly
+        preprocessed_texture = prepare_texture_for_stereogram(texture_pil, min_sep, max_sep, verbose=verbose_main)
+        texture_img = preprocessed_texture.convert('RGB')
+    except Exception as e:
+        print(f"Error preparing images for layered stereogram: {e}")
+        return False
+    
+    width, height = depth_map_img.size
+    texture_width, texture_height = texture_img.size
+    stereogram_img = Image.new('RGB', (width, height))
+    depth_pixels = depth_map_img.load()
+    texture_pixels = texture_img.load()
+    output_pixels = stereogram_img.load()
+
+    for y in tqdm(range(height), desc="Stereogram Rows (Layered Algo)", leave=False):
+        for x in range(width):
+            depth_value_normalized = depth_pixels[x, y] / 255.0
+            current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
+            current_separation = max(1, current_separation)
+            
+            constraint_x = x - current_separation
+            
+            if constraint_x >= 0:
+                # Must match the constrained pixel
+                output_pixels[x, y] = output_pixels[constraint_x, y]
+            else:
+                # Free pixel - use preprocessed texture
+                wp_x = x % texture_width
+                wp_y = y % texture_height
+                output_pixels[x, y] = texture_pixels[wp_x, wp_y]
+    
+    try:
+        stereogram_img.save(output_path)
+        return True
+    except Exception as e:
+        print(f"Error saving output stereogram (layered): {e}")
+        return False
+
+# --- Stereogram Generation Function (Random Dot Stereogram) ---
+def generate_stereogram_random_dots(depth_map_pil, output_path, min_sep, max_sep, dot_density=0.5):
+    """
+    Generates a true random dot stereogram (RDS) without texture.
+    This avoids repetition issues entirely.
+    """
+    try:
+        depth_map_img = depth_map_pil.convert('L')
+    except Exception as e:
+        print(f"Error preparing depth map for RDS: {e}")
+        return False
+
+    width, height = depth_map_img.size
+    stereogram_img = Image.new('RGB', (width, height), (128, 128, 128))  # RGB with gray background
+    depth_pixels = depth_map_img.load()
+    output_pixels = stereogram_img.load()
+
+    for y in tqdm(range(height), desc="RDS Rows", leave=False):
+        for x in range(width):
+            depth_value_normalized = depth_pixels[x, y] / 255.0
+            current_separation = int(min_sep + (max_sep - min_sep) * depth_value_normalized)
+            current_separation = max(1, current_separation)
+            
+            constraint_x = x - current_separation
+            
+            if constraint_x >= 0:
+                # Must match the constrained pixel
+                output_pixels[x, y] = output_pixels[constraint_x, y]
+            else:
+                # Free pixel - assign random dot
+                if random.random() < dot_density:
+                    # Random colored dot
+                    output_pixels[x, y] = (
+                        random.randint(0, 255),
+                        random.randint(0, 255),
+                        random.randint(0, 255)
+                    )
+                else:
+                    # Background color
+                    output_pixels[x, y] = (128, 128, 128)
+    
+    try:
+        stereogram_img.save(output_path)
+        return True
+    except Exception as e:
+        print(f"Error saving RDS: {e}")
+        return False
+
 # --- Depth Map Generation Function ---
-# (create_depth_map_from_image - unchanged from previous version)
 def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_size=None, invert_depth_map=False, verbose=True):
     if verbose: print(f"Depth Map Gen: Loading MiDaS model ({model_type})...")
     try:
@@ -201,10 +325,11 @@ def main():
     stereo_group.add_argument("--minsep", type=int, default=MIN_SEPARATION_DEFAULT, help="Min separation for far points (pixels).")
     stereo_group.add_argument("--maxsep", type=int, default=MAX_SEPARATION_DEFAULT, help="Max separation for near points (pixels).")
     stereo_group.add_argument("--tex_alt_algo", action="store_true", help="Use alternative stereogram generation algorithm for improved texture continuity.")
-
+    stereo_group.add_argument("--tex_alt_layer", action="store_true", help="Use layered algorithm with texture preprocessing to reduce repetition artifacts.")
+    stereo_group.add_argument("--tex_alt_rds", action="store_true", help="Generate a random dot stereogram (RDS) instead of texture-based.")
+    stereo_group.add_argument("--dot_density", type=float, default=0.5, help="Dot density for random dot stereograms (0.0-1.0).")
 
     # Depth Map Params
-    # ... (depth_group args unchanged from previous version) ...
     depth_group = parser.add_argument_group('Depth Map Generation (MiDaS)')
     depth_group.add_argument("--midasmodel", default="MiDaS_small", choices=["MiDaS_small", "DPT_Large", "DPT_Hybrid"], help="MiDaS model for depth estimation.")
     depth_group.add_argument("--save_depthmap", type=str, default=None, help="Optional: Path to save the AI-generated depth map (full path or directory).")
@@ -212,7 +337,6 @@ def main():
     depth_group.add_argument("--depth_invert", action="store_true", help="Invert the generated depth map (near becomes far and vice-versa).")
 
     # Texture Source Params
-    # ... (texture_source_group args for loading/generating and final transforms unchanged from previous) ...
     texture_source_group = parser.add_argument_group('Texture Source & Final Transforms')
     texture_source_group.add_argument("--texture", default=None, help="Path to an external texture image. If None, on-the-fly generation is used.")
     texture_source_group.add_argument("--generate_texture_on_the_fly", action="store_true", help="Force on-the-fly texture generation. Overrides --texture if specified.")
@@ -224,7 +348,6 @@ def main():
     texture_source_group.add_argument("--tex_invert_colors", action="store_true", help="Invert colors of the final texture. Applied after grid.")
 
     # On-the-fly Texture Generation Args
-    # ... (tex_gen_group and its subgroups for M1-M4 args unchanged from previous) ...
     tex_gen_group = parser.add_argument_group('On-the-fly Texture Generation Overrides (used if --generate_texture_on_the_fly and --tex_input_raw is False)')
     tex_gen_group.add_argument("--tex_max_megapixels", type=float, default=None, help="Texture: Resize base image for texture to approx this MP. (Default for auto-gen: 2.0, for manual override: 1.0)")
     tex_gen_group.add_argument("--tex_combination_mode", type=str, choices=["sequential", "blend"], default=None, help="Texture: How to combine method outputs. (Default for auto-gen: blend, for manual override: sequential)")
@@ -257,7 +380,6 @@ def main():
     tex_m4_group.add_argument("--tex_m4_glyph_size", type=int, default=None, help="Texture M4: Glyph size. (Script Default: 10)")
     tex_m4_group.add_argument("--tex_m4_glyph_style", type=str, choices=["random_dots", "lines", "circles", "solid"], default=None, help="Texture M4: Glyph style. (Script Default: random_dots)")
     tex_m4_group.add_argument("--tex_m4_use_quantized_color_for_glyph_element", action="store_true", help="Texture M4: Use quantized color. (Default for auto-gen: True)")
-
 
     args = parser.parse_args()
     print("--- DeepStereo Generator ---")
@@ -310,6 +432,22 @@ def main():
             generated_depth_map_pil.save(depthmap_save_path); print(f"Generated depth map saved to {depthmap_save_path}")
         except Exception as e: print(f"Error saving generated depth map: {e}")
 
+    # Handle RDS mode first (doesn't need texture)
+    if args.tex_alt_rds:
+        print("Generating Random Dot Stereogram (RDS)...")
+        filename_suffix += "_rdsAlgo"
+        final_stereogram_filename = f"{output_filename_base}{filename_suffix}_{timestamp}.png"
+        final_stereogram_path = os.path.join(args.output_dir, final_stereogram_filename)
+        
+        success = generate_stereogram_random_dots(
+            generated_depth_map_pil, final_stereogram_path, args.minsep, args.maxsep, args.dot_density
+        )
+        
+        if success: print(f"DeepStereo RDS generation complete! Output: {final_stereogram_path}")
+        else: print("DeepStereo RDS generation failed.")
+        return
+
+    # For non-RDS modes, we need texture
     texture_to_use_pil = None
     texture_base_image_source_path = args.texture_base_image_path if args.texture_base_image_path else args.input
     texture_gen_suffix_part = "" # Suffix for texture generation steps
@@ -345,7 +483,6 @@ def main():
 
                 if use_preferred_defaults:
                     print("Using preferred default settings for on-the-fly texture generation methods.")
-                    # ... (Set preferred defaults on tex_args_for_generator as before) ...
                     setattr(tex_args_for_generator, 'tex_max_megapixels', 2.0)
                     setattr(tex_args_for_generator, 'tex_combination_mode', 'blend')
                     setattr(tex_args_for_generator, 'tex_blend_type', 'average')
@@ -365,7 +502,6 @@ def main():
                     setattr(tex_args_for_generator, 'tex_method3_voronoi', False)
                 else: 
                     print("Using user-specified flags for on-the-fly texture generation methods.")
-                    # ... (Populate tex_args_for_generator from args or script defaults as before) ...
                     def get_arg_val(arg_short_name, script_default):
                         user_val = getattr(args, f"tex_{arg_short_name}", None)
                         return user_val if user_val is not None else script_default
@@ -470,19 +606,21 @@ def main():
 
     if not texture_to_use_pil: print("Critical error: Texture could not be prepared. Exiting."); return
 
-    # Add stereogram algorithm type to suffix
-    if args.tex_alt_algo:
+    # Determine which algorithm to use
+    if args.tex_alt_layer:
+        filename_suffix += "_layerAlgo"
+        stereogram_function_to_call = generate_stereogram_layered_texture
+    elif args.tex_alt_algo:
         filename_suffix += "_altAlgo"
+        stereogram_function_to_call = generate_stereogram_improved_texture
     else:
         filename_suffix += "_stdAlgo"
-
+        stereogram_function_to_call = generate_stereogram_standard_texture
 
     final_stereogram_filename = f"{output_filename_base}{filename_suffix}_{timestamp}.png"
     final_stereogram_path = os.path.join(args.output_dir, final_stereogram_filename)
 
     print(f"Proceeding to stereogram generation. Output will be: {final_stereogram_path}")
-    
-    stereogram_function_to_call = generate_stereogram_improved_texture if args.tex_alt_algo else generate_stereogram_standard_texture
     
     success = stereogram_function_to_call(
         generated_depth_map_pil, texture_to_use_pil, final_stereogram_path, args.minsep, args.maxsep
