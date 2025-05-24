@@ -59,10 +59,9 @@ def apply_texture_transforms(image_pil, rotate_degrees=0, grid_rows=0, grid_cols
 def transform_input_for_texture(image_pil, hex_color, darken_factor=0.9, blur_radius=5, verbose=True):
     """
     Transform the input image into a texture by:
-    1. Converting to grayscale
-    2. Colorizing with the specified hex color
-    3. Darkening the result
-    4. Applying blur
+    1. Applying a color overlay/tint
+    2. Optional blur
+    3. Optional subtle darkening
     
     Args:
         image_pil: Input PIL Image
@@ -81,37 +80,52 @@ def transform_input_for_texture(image_pil, hex_color, darken_factor=0.9, blur_ra
         if verbose: print(f"Warning: Invalid hex color '{hex_color}'. Using dark blue (#000080).")
         target_color = (0, 0, 128)
     
-    # Step 1: Convert to grayscale
-    gray_img = image_pil.convert('L')
+    # Convert to RGB if needed
+    working_img = image_pil.convert('RGB')
     
-    # Step 2: Colorize
-    # Create a colored version by using the grayscale as alpha for the target color
-    colored_img = Image.new('RGB', gray_img.size)
+    # Method 1: Color overlay with preserved luminance
+    # This creates a nice hazy color effect
     
-    # For each pixel, blend between black and target color based on grayscale value
+    # Create a solid color overlay
+    color_overlay = Image.new('RGB', working_img.size, target_color)
+    
+    # Blend using overlay mode (or try 'soft_light' for subtler effect)
+    # Overlay mode: combines multiply and screen modes based on base color
+    result_img = Image.blend(working_img, color_overlay, 0.5)  # 50% blend
+    
+    # Alternative Method 2: Duotone effect (uncomment to try)
+    # This preserves detail while adding color
+    """
+    # Convert to grayscale first
+    gray_img = working_img.convert('L')
+    
+    # Create duotone by mapping grays to color range
+    result_img = Image.new('RGB', gray_img.size)
     width, height = gray_img.size
     gray_pixels = gray_img.load()
-    colored_pixels = colored_img.load()
+    result_pixels = result_img.load()
     
     for y in range(height):
         for x in range(width):
-            gray_value = gray_pixels[x, y] / 255.0  # Normalize to 0-1
-            # Blend between black and target color
-            colored_pixels[x, y] = tuple(int(gray_value * c) for c in target_color)
+            gray_value = gray_pixels[x, y] / 255.0
+            # Map from white to target color (instead of black to target)
+            result_pixels[x, y] = tuple(
+                int(255 - (255 - c) * (1 - gray_value)) 
+                for c in target_color
+            )
+    """
     
-    # Step 3: Darken
+    # Optional: Apply subtle darkening if needed
     if darken_factor < 1.0:
-        if verbose: print(f"Input Transform: Darkening by factor {darken_factor}")
-        # Create a black image and blend
-        black_img = Image.new('RGB', colored_img.size, (0, 0, 0))
-        colored_img = Image.blend(black_img, colored_img, darken_factor)
+        if verbose: print(f"Input Transform: Applying subtle darkening factor {darken_factor}")
+        result_img = ImageEnhance.Brightness(result_img).enhance(darken_factor)
     
-    # Step 4: Apply blur
+    # Apply blur
     if blur_radius > 0:
         if verbose: print(f"Input Transform: Applying blur with radius {blur_radius}")
-        colored_img = colored_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+        result_img = result_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
     
-    return colored_img
+    return result_img
 
 # --- Texture Preprocessing Function ---
 def prepare_texture_for_stereogram(texture_pil, min_sep, max_sep, verbose=True):
