@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import numpy as np
 import random
 import math
+from tqdm import tqdm # Import tqdm
 
 # --- Helper Functions ---
 def parse_color(color_str, default_color=(0, 0, 0)):
@@ -25,7 +26,6 @@ def parse_color(color_str, default_color=(0, 0, 0)):
     return default_color
 
 def get_pixel_value_safe(pil_image, x, y):
-    """Safely get pixel value, clamping coordinates."""
     x = max(0, min(x, pil_image.width - 1))
     y = max(0, min(y, pil_image.height - 1))
     return pil_image.getpixel((x, y))
@@ -36,205 +36,132 @@ def apply_method1_color_dots(content_image_pil, density=0.5, dot_size=1, bg_colo
     width, height = content_image_pil.size
     output_image = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(output_image)
-
     num_dots = int(width * height * density)
 
-    for _ in range(num_dots):
+    # Wrap the loop with tqdm
+    for _ in tqdm(range(num_dots), desc="Method 1: Dots"):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        
-        # Sample color from content image
-        # Ensure content_image is RGB for consistent color sampling
         content_color = get_pixel_value_safe(content_image_pil.convert("RGB"), x, y)
-        
         if dot_size == 1:
             draw.point((x, y), fill=content_color)
         else:
             draw.rectangle([x, y, x + dot_size - 1, y + dot_size - 1], fill=content_color)
-            
     return output_image
 
 # --- Method 2: Content-Image-Driven Density/Size of Procedural Elements ---
-def apply_method2_density_size(content_image_pil, mode="density", element_color=(0,0,0), 
-                               bg_color=(255,255,255), base_size=2, max_size=10, 
+def apply_method2_density_size(content_image_pil, mode="density", element_color=(0,0,0),
+                               bg_color=(255,255,255), base_size=2, max_size=10,
                                invert_influence=False, density_factor=1.0):
     print(f"Applying Method 2: {mode.capitalize()} (Element: {element_color}, BG: {bg_color}, Invert: {invert_influence})")
     width, height = content_image_pil.size
     output_image = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(output_image)
-    
-    # Use grayscale of content image to drive the effect
     content_gray = content_image_pil.convert("L")
 
     if mode == "density":
-        # Iterate with a step to avoid placing elements at every pixel if base_size > 1
-        step = max(1, base_size) 
-        for r in range(0, height, step):
+        step = max(1, base_size)
+        # Wrap the outer loop with tqdm
+        for r in tqdm(range(0, height, step), desc="Method 2: Density"):
             for c in range(0, width, step):
-                brightness = get_pixel_value_safe(content_gray, c, r) / 255.0 # 0 (black) to 1 (white)
-                if invert_influence:
-                    influence = brightness # Brighter content -> higher influence
-                else:
-                    influence = 1.0 - brightness # Darker content -> higher influence
-                
-                # Probability of placing an element
+                brightness = get_pixel_value_safe(content_gray, c, r) / 255.0
+                influence = brightness if invert_influence else 1.0 - brightness
                 if random.random() < (influence * density_factor):
                     draw.rectangle([c, r, c + base_size - 1, r + base_size - 1], fill=element_color)
-    
     elif mode == "size":
-        num_elements = int((width * height * 0.1) * density_factor) # Arbitrary number of elements
-        for _ in range(num_elements):
+        num_elements = int((width * height * 0.1) * density_factor)
+        # Wrap the loop with tqdm
+        for _ in tqdm(range(num_elements), desc="Method 2: Size"):
             x = random.randint(0, width - 1)
             y = random.randint(0, height - 1)
-            
             brightness = get_pixel_value_safe(content_gray, x, y) / 255.0
-            if invert_influence:
-                influence = brightness
-            else:
-                influence = 1.0 - brightness
-            
-            current_size = int(base_size + (max_size - base_size) * influence)
-            current_size = max(1, current_size) # Ensure size is at least 1
-            
-            ex1 = x - current_size // 2
-            ey1 = y - current_size // 2
-            ex2 = ex1 + current_size -1
-            ey2 = ey1 + current_size -1
+            influence = brightness if invert_influence else 1.0 - brightness
+            current_size = max(1, int(base_size + (max_size - base_size) * influence))
+            ex1, ey1 = x - current_size // 2, y - current_size // 2
+            ex2, ey2 = ex1 + current_size - 1, ey1 + current_size - 1
             draw.rectangle([ex1, ey1, ex2, ey2], fill=element_color)
-            
     return output_image
 
 # --- Method 3: Simplified Voronoi/Worley-like Noise ---
-def apply_method3_voronoi(content_image_pil, num_points=100, metric="F1", 
+def apply_method3_voronoi(content_image_pil, num_points=100, metric="F1",
                           color_source="distance", point_color=(255,0,0)):
     print(f"Applying Method 3: Voronoi-like (Points: {num_points}, Metric: {metric}, Color: {color_source})")
     width, height = content_image_pil.size
     output_image = Image.new("RGB", (width, height))
     output_pixels = output_image.load()
-
     points = []
     for _ in range(num_points):
-        px = random.randint(0, width - 1)
-        py = random.randint(0, height - 1)
-        # For content color source, store the color from the content image at the point's location
+        px, py = random.randint(0, width - 1), random.randint(0, height - 1)
         p_content_color = get_pixel_value_safe(content_image_pil.convert("RGB"), px, py)
         points.append((px, py, p_content_color))
 
-    if not points: return content_image_pil.copy() # Should not happen if num_points > 0
+    if not points: return content_image_pil.copy()
+    max_dist_val = math.sqrt(width**2 + height**2) / 3 # Adjusted normalization factor
 
-    max_dist_sq = width**2 + height**2 # For normalization
-
-    for r in range(height):
+    # Wrap the outer loop with tqdm
+    for r in tqdm(range(height), desc="Method 3: Voronoi"):
         for c in range(width):
-            distances_sq = sorted([( (c - px)**2 + (r - py)**2, p_content_color ) for px, py, p_content_color in points])
-            
+            distances_sq = sorted([((c - px)**2 + (r - py)**2, p_content_color) for px, py, p_content_color in points])
             final_color = (0,0,0)
-            
             if color_source == "distance":
                 dist_val = 0
-                if metric == "F1" and len(distances_sq) > 0:
-                    dist_val = math.sqrt(distances_sq[0][0])
-                elif metric == "F2" and len(distances_sq) > 1:
-                    dist_val = math.sqrt(distances_sq[1][0])
-                elif metric == "F2-F1" and len(distances_sq) > 1:
-                    dist_val = abs(math.sqrt(distances_sq[1][0]) - math.sqrt(distances_sq[0][0]))
-                
-                # Normalize and scale to 0-255
-                # Max possible distance is sqrt(max_dist_sq)
-                norm_dist = min(dist_val / (math.sqrt(max_dist_sq)/3), 1.0) # Adjust normalization factor for better visual
+                if metric == "F1" and len(distances_sq) > 0: dist_val = math.sqrt(distances_sq[0][0])
+                elif metric == "F2" and len(distances_sq) > 1: dist_val = math.sqrt(distances_sq[1][0])
+                elif metric == "F2-F1" and len(distances_sq) > 1: dist_val = abs(math.sqrt(distances_sq[1][0]) - math.sqrt(distances_sq[0][0]))
+                norm_dist = min(dist_val / max_dist_val, 1.0)
                 gray_val = int(norm_dist * 255)
                 final_color = (gray_val, gray_val, gray_val)
-            
-            elif color_source == "content_point_color": # Color based on the content color of the Nth point
-                if metric == "F1" and len(distances_sq) > 0:
-                    final_color = distances_sq[0][1] 
-                elif metric == "F2" and len(distances_sq) > 1:
-                    final_color = distances_sq[1][1]
-                elif metric == "F2-F1" and len(distances_sq) > 1: # This combination is less intuitive
-                    c1 = np.array(distances_sq[0][1])
-                    c2 = np.array(distances_sq[1][1])
-                    final_color = tuple(np.clip(np.abs(c1-c2), 0, 255).astype(int))
-                else: # Fallback to first point's color if not enough points for F2
-                     final_color = distances_sq[0][1] if distances_sq else (0,0,0)
-
-            elif color_source == "content_pixel_color": # Color with current pixel's content color, pattern from distance
-                # (This is similar to just using the content image, but the structure can be emphasized by metric)
-                # Let's make this option color the VORONOI CELLS with the point's color
-                # This makes it distinct. Closest point's content color.
+            elif color_source == "content_point_color":
+                idx = 0
+                if metric == "F2" and len(distances_sq) > 1: idx = 1
+                # F2-F1 for color is less intuitive, here just using F1/F2's point color
+                final_color = distances_sq[idx][1] if len(distances_sq) > idx else (0,0,0)
+            elif color_source == "content_pixel_color": # Actually Voronoi cell coloring
                 final_color = distances_sq[0][1] if distances_sq else (0,0,0)
-
-
             output_pixels[c, r] = final_color
-            
     return output_image
-
 
 # --- Method 4: Stylized Dithering with Custom Glyphs ---
 def generate_glyph(glyph_style, size, color=(0,0,0), bg_color=(255,255,255)):
     glyph_img = Image.new("RGB", (size, size), bg_color)
     draw = ImageDraw.Draw(glyph_img)
     if glyph_style == "random_dots":
-        for _ in range(int(size * size * 0.3)): # 30% density
-            gx = random.randint(0, size - 1)
-            gy = random.randint(0, size - 1)
-            draw.point((gx, gy), fill=color)
+        for _ in range(int(size * size * 0.3)):
+            draw.point((random.randint(0, size - 1), random.randint(0, size - 1)), fill=color)
     elif glyph_style == "lines":
-        for i in range(0, size, max(1,size // 4)):
-            draw.line([(0, i), (size - 1, i)], fill=color, width=1)
+        for i in range(0, size, max(1, size // 4)): draw.line([(0, i), (size - 1, i)], fill=color, width=1)
     elif glyph_style == "circles":
-        draw.ellipse([(1, 1, size - 2, size - 2)], outline=color, fill=bg_color if random.random() > 0.5 else color) # Random fill
+        draw.ellipse([(1, 1, size - 2, size - 2)], outline=color, fill=bg_color if random.random() > 0.5 else color)
     elif glyph_style == "solid":
-         draw.rectangle([(0,0), (size-1,size-1)], fill=color)
+        draw.rectangle([(0,0), (size-1,size-1)], fill=color)
     return glyph_img
 
-def apply_method4_glyph_dither(content_image_pil, num_colors=4, glyph_size=8, 
-                               glyph_style="random_dots", base_glyph_color_str="0,0,0", 
+def apply_method4_glyph_dither(content_image_pil, num_colors=4, glyph_size=8,
+                               glyph_style="random_dots", base_glyph_color_str="0,0,0",
                                use_quantized_color_for_glyph=True):
     print(f"Applying Method 4: Glyph Dither (Colors: {num_colors}, Size: {glyph_size}, Style: {glyph_style})")
     width, height = content_image_pil.size
-    
-    # Quantize the content image
     quantized_content = content_image_pil.convert("RGB").quantize(colors=num_colors, method=Image.Quantize.MAXCOVERAGE)
-    # Get the palette from the quantized image; ensure it's RGB
-    palette_rgb = [tuple(quantized_content.getpalette()[i*3 : i*3+3]) for i in range(num_colors)]
-    # Remap quantized image to an RGB image using its actual palette for easier pixel access
     quantized_content_rgb = quantized_content.convert("RGB")
-
-
     output_image = Image.new("RGB", (width, height))
-    
     base_glyph_color = parse_color(base_glyph_color_str)
 
-    # Generate glyphs (or could be cached)
-    # For simplicity, we'll generate one type of glyph, but its color can change
-    
-    for r_block in range(0, height, glyph_size):
+    # Wrap the outer loop with tqdm
+    for r_block in tqdm(range(0, height, glyph_size), desc="Method 4: Glyph Dither"):
         for c_block in range(0, width, glyph_size):
-            # Get dominant color from the block in quantized_content_rgb
-            # Or just sample center of block
             block_x = min(c_block + glyph_size // 2, width - 1)
             block_y = min(r_block + glyph_size // 2, height - 1)
             quantized_pixel_color = get_pixel_value_safe(quantized_content_rgb, block_x, block_y)
-            
-            glyph_draw_color = base_glyph_color
-            if use_quantized_color_for_glyph:
-                glyph_draw_color = quantized_pixel_color # Use the actual color from quantized image
-
-            # Determine background for glyph if needed (e.g. making glyph's color contrast with block's average)
-            # For simplicity, assume glyph bg is white or transparent if glyph itself is dark.
-            glyph_bg_color = (255,255,255) # A contrasting bg for glyphs; could be derived too.
-            if sum(glyph_draw_color) > 384 : # if glyph color is light
-                glyph_bg_color = (0,0,0)
-
-
+            glyph_draw_color = quantized_pixel_color if use_quantized_color_for_glyph else base_glyph_color
+            glyph_bg_color = (0,0,0) if sum(glyph_draw_color) > 384 else (255,255,255)
             glyph = generate_glyph(glyph_style, glyph_size, color=glyph_draw_color, bg_color=glyph_bg_color)
             output_image.paste(glyph, (c_block, r_block))
-            
     return output_image
-
 
 # --- Main Execution ---
 def main():
+    print("--- Procedural Texture Generator ---")
+    print("NOTE: All processing is done on the CPU and can be slow for large images or complex methods.")
     parser = argparse.ArgumentParser(description="Procedurally generate textures influenced by a content image.")
     parser.add_argument("--input", required=True, help="Path to the input content image.")
     parser.add_argument("--output_dir", default=".", help="Directory to save the processed image.")
@@ -312,10 +239,6 @@ def main():
 
     if not processed_suffix:
         print("No processing methods selected. Nothing to do.")
-        # Optionally save a copy or do nothing
-        # output_filename = os.path.join(args.output_dir, f"{base_filename}_original_copy.png")
-        # current_image.save(output_filename)
-        # print(f"Saved a copy to {output_filename}")
         return
 
     output_filename = os.path.join(args.output_dir, f"{base_filename}{processed_suffix}.png")
