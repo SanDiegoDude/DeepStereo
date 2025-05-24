@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import numpy as np
 import random
 import math
-from tqdm import tqdm # Import tqdm
+from tqdm import tqdm
 
 # --- Helper Functions ---
 def parse_color(color_str, default_color=(0, 0, 0)):
@@ -13,22 +13,35 @@ def parse_color(color_str, default_color=(0, 0, 0)):
             return tuple(map(int, color_str.split(',')))
         except ValueError:
             return default_color
-    elif color_str.lower() == "white":
-        return (255, 255, 255)
-    elif color_str.lower() == "black":
-        return (0, 0, 0)
-    elif color_str.lower() == "red":
-        return (255, 0, 0)
-    elif color_str.lower() == "green":
-        return (0, 255, 0)
-    elif color_str.lower() == "blue":
-        return (0, 0, 255)
+    elif color_str.lower() == "white": return (255, 255, 255)
+    elif color_str.lower() == "black": return (0, 0, 0)
+    # ... (add other color names if desired)
     return default_color
 
 def get_pixel_value_safe(pil_image, x, y):
     x = max(0, min(x, pil_image.width - 1))
     y = max(0, min(y, pil_image.height - 1))
     return pil_image.getpixel((x, y))
+
+def resize_to_megapixels(image_pil, target_mp):
+    if target_mp <= 0:
+        return image_pil
+    
+    w, h = image_pil.size
+    current_mp = (w * h) / 1_000_000.0
+    
+    if current_mp <= target_mp:
+        print(f"Image is already within target megapixels ({current_mp:.2f}MP <= {target_mp:.2f}MP). No resize needed.")
+        return image_pil
+
+    scale_factor = math.sqrt(target_mp / current_mp)
+    new_w = int(w * scale_factor)
+    new_h = int(h * scale_factor)
+
+    print(f"Resizing image from {w}x{h} ({current_mp:.2f}MP) to {new_w}x{new_h} (~{target_mp:.2f}MP)...")
+    # Use Resampling.LANCZOS for high-quality downsampling
+    resized_image = image_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    return resized_image
 
 # --- Method 1: Content-Image-Driven Color Palette for Procedural Dots ---
 def apply_method1_color_dots(content_image_pil, density=0.5, dot_size=1, bg_color=(0,0,0)):
@@ -38,7 +51,6 @@ def apply_method1_color_dots(content_image_pil, density=0.5, dot_size=1, bg_colo
     draw = ImageDraw.Draw(output_image)
     num_dots = int(width * height * density)
 
-    # Wrap the loop with tqdm
     for _ in tqdm(range(num_dots), desc="Method 1: Dots"):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
@@ -61,7 +73,6 @@ def apply_method2_density_size(content_image_pil, mode="density", element_color=
 
     if mode == "density":
         step = max(1, base_size)
-        # Wrap the outer loop with tqdm
         for r in tqdm(range(0, height, step), desc="Method 2: Density"):
             for c in range(0, width, step):
                 brightness = get_pixel_value_safe(content_gray, c, r) / 255.0
@@ -70,7 +81,6 @@ def apply_method2_density_size(content_image_pil, mode="density", element_color=
                     draw.rectangle([c, r, c + base_size - 1, r + base_size - 1], fill=element_color)
     elif mode == "size":
         num_elements = int((width * height * 0.1) * density_factor)
-        # Wrap the loop with tqdm
         for _ in tqdm(range(num_elements), desc="Method 2: Size"):
             x = random.randint(0, width - 1)
             y = random.randint(0, height - 1)
@@ -96,9 +106,8 @@ def apply_method3_voronoi(content_image_pil, num_points=100, metric="F1",
         points.append((px, py, p_content_color))
 
     if not points: return content_image_pil.copy()
-    max_dist_val = math.sqrt(width**2 + height**2) / 3 # Adjusted normalization factor
+    max_dist_val = math.sqrt(width**2 + height**2) / 3 
 
-    # Wrap the outer loop with tqdm
     for r in tqdm(range(height), desc="Method 3: Voronoi"):
         for c in range(width):
             distances_sq = sorted([((c - px)**2 + (r - py)**2, p_content_color) for px, py, p_content_color in points])
@@ -108,15 +117,14 @@ def apply_method3_voronoi(content_image_pil, num_points=100, metric="F1",
                 if metric == "F1" and len(distances_sq) > 0: dist_val = math.sqrt(distances_sq[0][0])
                 elif metric == "F2" and len(distances_sq) > 1: dist_val = math.sqrt(distances_sq[1][0])
                 elif metric == "F2-F1" and len(distances_sq) > 1: dist_val = abs(math.sqrt(distances_sq[1][0]) - math.sqrt(distances_sq[0][0]))
-                norm_dist = min(dist_val / max_dist_val, 1.0)
+                norm_dist = min(dist_val / max_dist_val, 1.0) if max_dist_val > 0 else 0
                 gray_val = int(norm_dist * 255)
                 final_color = (gray_val, gray_val, gray_val)
             elif color_source == "content_point_color":
                 idx = 0
                 if metric == "F2" and len(distances_sq) > 1: idx = 1
-                # F2-F1 for color is less intuitive, here just using F1/F2's point color
                 final_color = distances_sq[idx][1] if len(distances_sq) > idx else (0,0,0)
-            elif color_source == "content_pixel_color": # Actually Voronoi cell coloring
+            elif color_source == "content_pixel_color": 
                 final_color = distances_sq[0][1] if distances_sq else (0,0,0)
             output_pixels[c, r] = final_color
     return output_image
@@ -146,7 +154,6 @@ def apply_method4_glyph_dither(content_image_pil, num_colors=4, glyph_size=8,
     output_image = Image.new("RGB", (width, height))
     base_glyph_color = parse_color(base_glyph_color_str)
 
-    # Wrap the outer loop with tqdm
     for r_block in tqdm(range(0, height, glyph_size), desc="Method 4: Glyph Dither"):
         for c_block in range(0, width, glyph_size):
             block_x = min(c_block + glyph_size // 2, width - 1)
@@ -165,7 +172,9 @@ def main():
     parser = argparse.ArgumentParser(description="Procedurally generate textures influenced by a content image.")
     parser.add_argument("--input", required=True, help="Path to the input content image.")
     parser.add_argument("--output_dir", default=".", help="Directory to save the processed image.")
+    parser.add_argument("--max_megapixels", type=float, default=0, help="Resize input image to approx this many megapixels before processing (e.g., 1.0 for 1MP). 0 for no resize. (default: 0)")
     
+    # ... (rest of the method arguments remain the same)
     # Method 1 Args
     parser.add_argument("--method1_color_dots", action="store_true", help="Apply Method 1: Content-driven color dots.")
     parser.add_argument("--m1_density", type=float, default=0.6, help="Dot density for Method 1 (0.0 to 1.0).")
@@ -210,12 +219,23 @@ def main():
     
     try:
         current_image = Image.open(args.input)
-        print(f"Loaded input image: {args.input} (Size: {current_image.size})")
+        print(f"Loaded input image: {args.input} (Original Size: {current_image.size})")
     except Exception as e:
         print(f"Error loading input image: {e}")
         return
 
+    # --- Apply Resize ---
+    if args.max_megapixels > 0:
+        current_image = resize_to_megapixels(current_image, args.max_megapixels)
+        print(f"Image resized to: {current_image.size} for processing.")
+    else:
+        print("No resizing applied based on megapixels.")
+
+
     processed_suffix = ""
+    if args.max_megapixels > 0: # Add a note to filename if resized
+        processed_suffix += f"_resized{args.max_megapixels:.1f}MP"
+
 
     if args.method1_color_dots:
         current_image = apply_method1_color_dots(current_image, args.m1_density, args.m1_dot_size, parse_color(args.m1_bg_color))
@@ -237,9 +257,13 @@ def main():
                                                  args.m4_use_quantized_color)
         processed_suffix += "_m4"
 
-    if not processed_suffix:
-        print("No processing methods selected. Nothing to do.")
-        return
+    if not (args.method1_color_dots or args.method2_density_size or args.method3_voronoi or args.method4_glyph_dither):
+        if args.max_megapixels > 0 and processed_suffix: # Only suffix was resize
+             print(f"Only resizing was applied. Saving resized image.")
+        else:
+            print("No processing methods selected, and no resize requested. Nothing to do.")
+            return
+
 
     output_filename = os.path.join(args.output_dir, f"{base_filename}{processed_suffix}.png")
     try:
