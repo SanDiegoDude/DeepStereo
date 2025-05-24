@@ -10,11 +10,10 @@ from tqdm import tqdm
 import deeptexture # Import the refactored texture generation module
 
 # Default stereogram separation values
-MIN_SEPARATION_DEFAULT = 40 # Changed default
-MAX_SEPARATION_DEFAULT = 100 # Changed default
+MIN_SEPARATION_DEFAULT = 40 
+MAX_SEPARATION_DEFAULT = 100 
 
 # --- Stereogram Generation Function ---
-# (generate_stereogram_from_pil_texture - no changes from last version)
 def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path, min_sep, max_sep):
     try:
         depth_map_img = depth_map_pil.convert('L')
@@ -48,7 +47,6 @@ def generate_stereogram_from_pil_texture(depth_map_pil, texture_pil, output_path
         return False
 
 # --- Depth Map Generation Function ---
-# (create_depth_map_from_image - no changes from last version)
 def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_size=None, verbose=True):
     if verbose: print(f"Depth Map Gen: Loading MiDaS model ({model_type})...")
     try:
@@ -56,7 +54,9 @@ def create_depth_map_from_image(image_path, model_type="MiDaS_small", target_siz
         midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
         if model_type == "DPT_Large" or model_type == "DPT_Hybrid": transform = midas_transforms.dpt_transform
         elif model_type == "MiDaS_small": transform = midas_transforms.small_transform
-        else: print(f"Warning: Unknown MiDaS model type '{model_type}'. Using small_transform."); transform = midas_transforms.small_transform
+        else: 
+            print(f"Warning: Unknown MiDaS model type '{model_type}'. Using small_transform.")
+            transform = midas_transforms.small_transform
         device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         model.to(device); model.eval()
         if verbose: print(f"Depth Map Gen: Using device: {device}")
@@ -102,8 +102,8 @@ def main():
 
     # Stereogram Params
     stereo_group = parser.add_argument_group('Stereogram Generation Parameters')
-    stereo_group.add_argument("--minsep", type=int, default=MIN_SEPARATION_DEFAULT, help="Min separation for far points (pixels).") # Default updated
-    stereo_group.add_argument("--maxsep", type=int, default=MAX_SEPARATION_DEFAULT, help="Max separation for near points (pixels).") # Default updated
+    stereo_group.add_argument("--minsep", type=int, default=MIN_SEPARATION_DEFAULT, help="Min separation for far points (pixels).")
+    stereo_group.add_argument("--maxsep", type=int, default=MAX_SEPARATION_DEFAULT, help="Max separation for near points (pixels).")
 
     # Depth Map Params
     depth_group = parser.add_argument_group('Depth Map Generation (MiDaS)')
@@ -120,44 +120,42 @@ def main():
 
 
     # On-the-fly Texture Generation Args (from deeptexture.py, prefixed with tex_)
-    # These are the user overrides. If not provided, and on-the-fly is active, "preferred defaults" will be used.
     tex_gen_group = parser.add_argument_group('On-the-fly Texture Generation Overrides (used if --generate_texture_on_the_fly)')
-    tex_gen_group.add_argument("--tex_max_megapixels", type=float, help="Texture: Resize base image for texture to approx this MP. (Default for auto-gen: 2.0)")
-    tex_gen_group.add_argument("--tex_combination_mode", choices=["sequential", "blend"], help="Texture: How to combine method outputs. (Default for auto-gen: blend)")
-    tex_gen_group.add_argument("--tex_blend_type", choices=["average", "lighten", "darken", "multiply", "screen", "add", "difference", "overlay"], help="Texture: Blend mode. (Default for auto-gen: average)")
-    tex_gen_group.add_argument("--tex_blend_opacity", type=float, help="Texture: Blend opacity (0.0-1.0). (Default for auto-gen: 0.75)")
+    tex_gen_group.add_argument("--tex_max_megapixels", type=float, default=None, help="Texture: Resize base image for texture to approx this MP. (Default for auto-gen: 2.0, for manual override: 1.0)")
+    tex_gen_group.add_argument("--tex_combination_mode", type=str, choices=["sequential", "blend"], default=None, help="Texture: How to combine method outputs. (Default for auto-gen: blend, for manual override: sequential)")
+    tex_gen_group.add_argument("--tex_blend_type", type=str, choices=["average", "lighten", "darken", "multiply", "screen", "add", "difference", "overlay"], default=None, help="Texture: Blend mode. (Default for auto-gen: average, for manual override: overlay)")
+    tex_gen_group.add_argument("--tex_blend_opacity", type=float, default=None, help="Texture: Blend opacity (0.0-1.0). (Default for auto-gen: 0.75, for manual override: 1.0)")
     
     tex_m1_group = tex_gen_group.add_argument_group('Texture Method 1 Overrides: Color Dots')
     tex_m1_group.add_argument("--tex_method1_color_dots", action="store_true", help="Texture M1: Apply. (Default for auto-gen: True)")
-    tex_m1_group.add_argument("--tex_m1_density", type=float, help="Texture M1: Dot density. (Default: 0.7)")
-    tex_m1_group.add_argument("--tex_m1_dot_size", type=int, help="Texture M1: Dot size. (Default for auto-gen: 50)")
-    tex_m1_group.add_argument("--tex_m1_bg_color", type=str, help="Texture M1: BG color. (Default: black)")
-    tex_m1_group.add_argument("--tex_m1_color_mode", choices=["content_pixel", "random_rgb", "random_from_palette", "transformed_hue", "transformed_invert"], help="Texture M1: Color mode. (Default for auto-gen: transformed_hue)")
-    tex_m1_group.add_argument("--tex_m1_hue_shift_degrees", type=float, help="Texture M1: Hue shift. (Default: 90)")
+    tex_m1_group.add_argument("--tex_m1_density", type=float, default=None, help="Texture M1: Dot density. (Script Default: 0.7)")
+    tex_m1_group.add_argument("--tex_m1_dot_size", type=int, default=None, help="Texture M1: Dot size. (Default for auto-gen: 50, Script Default: 2)")
+    tex_m1_group.add_argument("--tex_m1_bg_color", type=str, default=None, help="Texture M1: BG color. (Script Default: black)")
+    tex_m1_group.add_argument("--tex_m1_color_mode", type=str, choices=["content_pixel", "random_rgb", "random_from_palette", "transformed_hue", "transformed_invert"], default=None, help="Texture M1: Color mode. (Default for auto-gen: transformed_hue, Script Default: content_pixel)")
+    tex_m1_group.add_argument("--tex_m1_hue_shift_degrees", type=float, default=None, help="Texture M1: Hue shift. (Script Default: 90)")
     
     tex_m2_group = tex_gen_group.add_argument_group('Texture Method 2 Overrides: Density/Size Driven')
     tex_m2_group.add_argument("--tex_method2_density_size", action="store_true", help="Texture M2: Apply.")
-    # ... (all other tex_m2, tex_m3, tex_m4 override args)
-    tex_m2_group.add_argument("--tex_m2_mode", choices=["density", "size"], help="Texture M2: Mode. (Default: density)")
-    tex_m2_group.add_argument("--tex_m2_element_color", type=str, help="Texture M2: Element color. (Default: white)")
-    tex_m2_group.add_argument("--tex_m2_bg_color", type=str, help="Texture M2: BG color. (Default: black)")
-    tex_m2_group.add_argument("--tex_m2_base_size", type=int, help="Texture M2: Base size. (Default: 3)")
-    tex_m2_group.add_argument("--tex_m2_max_size", type=int, help="Texture M2: Max size. (Default: 12)")
-    tex_m2_group.add_argument("--tex_m2_invert_influence", action="store_true", help="Texture M2: Invert influence.")
-    tex_m2_group.add_argument("--tex_m2_density_factor", type=float, help="Texture M2: Density factor. (Default: 1.0)")
+    tex_m2_group.add_argument("--tex_m2_mode", type=str, choices=["density", "size"], default=None, help="Texture M2: Mode. (Script Default: density)")
+    tex_m2_group.add_argument("--tex_m2_element_color", type=str, default=None, help="Texture M2: Element color. (Script Default: white)")
+    tex_m2_group.add_argument("--tex_m2_bg_color", type=str, default=None, help="Texture M2: BG color. (Script Default: black)")
+    tex_m2_group.add_argument("--tex_m2_base_size", type=int, default=None, help="Texture M2: Base size. (Script Default: 3)")
+    tex_m2_group.add_argument("--tex_m2_max_size", type=int, default=None, help="Texture M2: Max size. (Script Default: 12)")
+    tex_m2_group.add_argument("--tex_m2_invert_influence", action="store_true", help="Texture M2: Invert influence.") # Handled by getattr default=False
+    tex_m2_group.add_argument("--tex_m2_density_factor", type=float, default=None, help="Texture M2: Density factor. (Script Default: 1.0)")
 
     tex_m3_group = tex_gen_group.add_argument_group('Texture Method 3 Overrides: Voronoi')
     tex_m3_group.add_argument("--tex_method3_voronoi", action="store_true", help="Texture M3: Apply.")
-    tex_m3_group.add_argument("--tex_m3_num_points", type=int, help="Texture M3: Num points. (Default: 200)")
-    tex_m3_group.add_argument("--tex_m3_metric", choices=["F1", "F2", "F2-F1"], help="Texture M3: Metric. (Default: F1)")
-    tex_m3_group.add_argument("--tex_m3_color_source", choices=["distance", "content_point_color", "voronoi_cell_content_color"], help="Texture M3: Color source. (Default: distance)")
+    tex_m3_group.add_argument("--tex_m3_num_points", type=int, default=None, help="Texture M3: Num points. (Script Default: 200)")
+    tex_m3_group.add_argument("--tex_m3_metric", type=str, choices=["F1", "F2", "F2-F1"], default=None, help="Texture M3: Metric. (Script Default: F1)")
+    tex_m3_group.add_argument("--tex_m3_color_source", type=str, choices=["distance", "content_point_color", "voronoi_cell_content_color"], default=None, help="Texture M3: Color source. (Script Default: distance)")
 
     tex_m4_group = tex_gen_group.add_argument_group('Texture Method 4 Overrides: Glyph Dither')
     tex_m4_group.add_argument("--tex_method4_glyph_dither", action="store_true", help="Texture M4: Apply. (Default for auto-gen: True)")
-    tex_m4_group.add_argument("--tex_m4_num_colors", type=int, help="Texture M4: Num colors for quantization. (Default: 8)")
-    tex_m4_group.add_argument("--tex_m4_glyph_size", type=int, help="Texture M4: Glyph size. (Default: 10)")
-    tex_m4_group.add_argument("--tex_m4_glyph_style", choices=["random_dots", "lines", "circles", "solid"], help="Texture M4: Glyph style. (Default: random_dots)")
-    tex_m4_group.add_argument("--tex_m4_use_quantized_color_for_glyph_element", action="store_true", help="Texture M4: Use quantized color for glyph elements.")
+    tex_m4_group.add_argument("--tex_m4_num_colors", type=int, default=None, help="Texture M4: Num colors for quantization. (Script Default: 8)")
+    tex_m4_group.add_argument("--tex_m4_glyph_size", type=int, default=None, help="Texture M4: Glyph size. (Script Default: 10)")
+    tex_m4_group.add_argument("--tex_m4_glyph_style", type=str, choices=["random_dots", "lines", "circles", "solid"], default=None, help="Texture M4: Glyph style. (Script Default: random_dots)")
+    tex_m4_group.add_argument("--tex_m4_use_quantized_color_for_glyph_element", action="store_true", help="Texture M4: Use quantized color. (Default for auto-gen: True)") # Default for auto-gen applied below
 
 
     args = parser.parse_args()
@@ -171,9 +169,8 @@ def main():
     input_filename_base = os.path.splitext(os.path.basename(args.input))[0]
     output_filename_base = args.output_filename_base if args.output_filename_base else input_filename_base
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_suffix = "" # This will be built based on operations
+    filename_suffix = "" 
 
-    # Determine target size for MiDaS
     target_midas_processing_size = None
     if args.depth_model_input_width and args.depth_model_input_width > 0:
         try:
@@ -203,14 +200,9 @@ def main():
             generated_depth_map_pil.save(depthmap_save_path); print(f"Generated depth map saved to {depthmap_save_path}")
         except Exception as e: print(f"Error saving generated depth map: {e}")
 
-    # --- Texture Preparation ---
     texture_to_use_pil = None
     texture_base_image_source_path = args.texture_base_image_path if args.texture_base_image_path else args.input
     texture_gen_suffix_part = ""
-    
-    # Determine if on-the-fly texture generation is primary
-    # If --generate_texture_on_the_fly is set, it takes precedence.
-    # If --texture is not set, on-the-fly is implied.
     should_generate_texture = args.generate_texture_on_the_fly or (not args.texture)
 
     if should_generate_texture:
@@ -220,63 +212,89 @@ def main():
             print(f"Using texture base image: {texture_base_image_source_path}")
         except Exception as e:
             print(f"Error loading texture base image '{texture_base_image_source_path}': {e}")
-            texture_base_image_pil = None # Fallback handled later
+            texture_base_image_pil = None 
 
         if texture_base_image_pil:
-            # Create a temporary args-like object for deeptexture, populating with user overrides or your preferred defaults
             tex_args_for_generator = argparse.Namespace()
-
-            # Your preferred defaults if no specific tex_method flags are set by user
-            preferred_defaults_active = not any([
+            
+            # Determine if user explicitly set any tex_method flags
+            user_set_any_tex_method_flag = any([
                 args.tex_method1_color_dots, args.tex_method2_density_size,
                 args.tex_method3_voronoi, args.tex_method4_glyph_dither
             ])
+            
+            use_preferred_defaults = not user_set_any_tex_method_flag
 
-            if preferred_defaults_active:
+            if use_preferred_defaults:
                 print("Using preferred default settings for on-the-fly texture generation.")
-                setattr(tex_args_for_generator, 'tex_max_megapixels', args.tex_max_megapixels if args.tex_max_megapixels is not None else 2.0)
-                setattr(tex_args_for_generator, 'tex_combination_mode', args.tex_combination_mode if args.tex_combination_mode is not None else 'blend')
-                setattr(tex_args_for_generator, 'tex_blend_type', args.tex_blend_type if args.tex_blend_type is not None else 'average')
-                setattr(tex_args_for_generator, 'tex_blend_opacity', args.tex_blend_opacity if args.tex_blend_opacity is not None else 0.75)
-                
-                setattr(tex_args_for_generator, 'tex_method1_color_dots', True) # Default M1
-                setattr(tex_args_for_generator, 'tex_m1_density', args.tex_m1_density if args.tex_m1_density is not None else 0.7)
-                setattr(tex_args_for_generator, 'tex_m1_dot_size', args.tex_m1_dot_size if args.tex_m1_dot_size is not None else 50)
-                setattr(tex_args_for_generator, 'tex_m1_bg_color', args.tex_m1_bg_color if args.tex_m1_bg_color is not None else "black")
-                setattr(tex_args_for_generator, 'tex_m1_color_mode', args.tex_m1_color_mode if args.tex_m1_color_mode is not None else "transformed_hue")
-                setattr(tex_args_for_generator, 'tex_m1_hue_shift_degrees', args.tex_m1_hue_shift_degrees if args.tex_m1_hue_shift_degrees is not None else 90)
+                setattr(tex_args_for_generator, 'tex_max_megapixels', 2.0)
+                setattr(tex_args_for_generator, 'tex_combination_mode', 'blend')
+                setattr(tex_args_for_generator, 'tex_blend_type', 'average')
+                setattr(tex_args_for_generator, 'tex_blend_opacity', 0.75)
+                setattr(tex_args_for_generator, 'tex_method1_color_dots', True)
+                setattr(tex_args_for_generator, 'tex_m1_density', 0.7)
+                setattr(tex_args_for_generator, 'tex_m1_dot_size', 50)
+                setattr(tex_args_for_generator, 'tex_m1_bg_color', "black")
+                setattr(tex_args_for_generator, 'tex_m1_color_mode', "transformed_hue")
+                setattr(tex_args_for_generator, 'tex_m1_hue_shift_degrees', 90.0)
+                setattr(tex_args_for_generator, 'tex_method4_glyph_dither', True)
+                setattr(tex_args_for_generator, 'tex_m4_num_colors', 8)
+                setattr(tex_args_for_generator, 'tex_m4_glyph_size', 10)
+                setattr(tex_args_for_generator, 'tex_m4_glyph_style', "random_dots")
+                setattr(tex_args_for_generator, 'tex_m4_use_quantized_color_for_glyph_element', True)
+                # Ensure other methods are false
+                setattr(tex_args_for_generator, 'tex_method2_density_size', False)
+                setattr(tex_args_for_generator, 'tex_method3_voronoi', False)
+            else: # User provided specific tex_method flags, populate from args, falling back to script defaults for details
+                print("Using user-specified flags for on-the-fly texture generation.")
+                # General tex args
+                setattr(tex_args_for_generator, 'tex_max_megapixels', args.tex_max_megapixels if args.tex_max_megapixels is not None else 1.0)
+                setattr(tex_args_for_generator, 'tex_combination_mode', args.tex_combination_mode if args.tex_combination_mode is not None else 'sequential')
+                setattr(tex_args_for_generator, 'tex_blend_type', args.tex_blend_type if args.tex_blend_type is not None else 'overlay')
+                setattr(tex_args_for_generator, 'tex_blend_opacity', args.tex_blend_opacity if args.tex_blend_opacity is not None else 1.0)
 
-                setattr(tex_args_for_generator, 'tex_method4_glyph_dither', True) # Default M4
-                setattr(tex_args_for_generator, 'tex_m4_num_colors', args.tex_m4_num_colors if args.tex_m4_num_colors is not None else 8)
-                setattr(tex_args_for_generator, 'tex_m4_glyph_size', args.tex_m4_glyph_size if args.tex_m4_glyph_size is not None else 10)
-                setattr(tex_args_for_generator, 'tex_m4_glyph_style', args.tex_m4_glyph_style if args.tex_m4_glyph_style is not None else "random_dots")
-                setattr(tex_args_for_generator, 'tex_m4_use_quantized_color_for_glyph_element', True if args.tex_m4_use_quantized_color_for_glyph_element else False) # Default for your pref
+                # Method 1
+                setattr(tex_args_for_generator, 'tex_method1_color_dots', args.tex_method1_color_dots)
+                if args.tex_method1_color_dots:
+                    setattr(tex_args_for_generator, 'tex_m1_density', args.tex_m1_density if args.tex_m1_density is not None else 0.7)
+                    setattr(tex_args_for_generator, 'tex_m1_dot_size', args.tex_m1_dot_size if args.tex_m1_dot_size is not None else 2)
+                    setattr(tex_args_for_generator, 'tex_m1_bg_color', args.tex_m1_bg_color if args.tex_m1_bg_color is not None else "black")
+                    setattr(tex_args_for_generator, 'tex_m1_color_mode', args.tex_m1_color_mode if args.tex_m1_color_mode is not None else "content_pixel")
+                    setattr(tex_args_for_generator, 'tex_m1_hue_shift_degrees', args.tex_m1_hue_shift_degrees if args.tex_m1_hue_shift_degrees is not None else 90.0)
                 
-                # Ensure other methods are explicitly false if not overridden by user
+                # Method 2
                 setattr(tex_args_for_generator, 'tex_method2_density_size', args.tex_method2_density_size)
+                if args.tex_method2_density_size:
+                    setattr(tex_args_for_generator, 'tex_m2_mode', args.tex_m2_mode if args.tex_m2_mode is not None else "density")
+                    setattr(tex_args_for_generator, 'tex_m2_element_color', args.tex_m2_element_color if args.tex_m2_element_color is not None else "white")
+                    setattr(tex_args_for_generator, 'tex_m2_bg_color', args.tex_m2_bg_color if args.tex_m2_bg_color is not None else "black")
+                    setattr(tex_args_for_generator, 'tex_m2_base_size', args.tex_m2_base_size if args.tex_m2_base_size is not None else 3)
+                    setattr(tex_args_for_generator, 'tex_m2_max_size', args.tex_m2_max_size if args.tex_m2_max_size is not None else 12)
+                    setattr(tex_args_for_generator, 'tex_m2_invert_influence', args.tex_m2_invert_influence) # action="store_true"
+                    setattr(tex_args_for_generator, 'tex_m2_density_factor', args.tex_m2_density_factor if args.tex_m2_density_factor is not None else 1.0)
+
+                # Method 3
                 setattr(tex_args_for_generator, 'tex_method3_voronoi', args.tex_method3_voronoi)
-            else: # User provided specific tex_method flags, use their settings or script defaults for those
-                print("Using user-specified or script default settings for on-the-fly texture generation.")
-                for arg_name, arg_value in vars(args).items():
-                    if arg_name.startswith("tex_"):
-                        setattr(tex_args_for_generator, arg_name, arg_value)
-                # Ensure any non-specified tex_method booleans are false
-                if not hasattr(tex_args_for_generator, 'tex_method1_color_dots'): setattr(tex_args_for_generator, 'tex_method1_color_dots', False)
-                if not hasattr(tex_args_for_generator, 'tex_method2_density_size'): setattr(tex_args_for_generator, 'tex_method2_density_size', False)
-                if not hasattr(tex_args_for_generator, 'tex_method3_voronoi'): setattr(tex_args_for_generator, 'tex_method3_voronoi', False)
-                if not hasattr(tex_args_for_generator, 'tex_method4_glyph_dither'): setattr(tex_args_for_generator, 'tex_method4_glyph_dither', False)
-                # Ensure essential general tex args have defaults if not provided by user when methods ARE specified
-                if not hasattr(tex_args_for_generator, 'tex_max_megapixels') or tex_args_for_generator.tex_max_megapixels is None: setattr(tex_args_for_generator, 'tex_max_megapixels', 1.0)
-                if not hasattr(tex_args_for_generator, 'tex_combination_mode')or tex_args_for_generator.tex_combination_mode is None: setattr(tex_args_for_generator, 'tex_combination_mode', 'sequential')
-                if not hasattr(tex_args_for_generator, 'tex_blend_type')or tex_args_for_generator.tex_blend_type is None: setattr(tex_args_for_generator, 'tex_blend_type', 'overlay')
-                if not hasattr(tex_args_for_generator, 'tex_blend_opacity') or tex_args_for_generator.tex_blend_opacity is None: setattr(tex_args_for_generator, 'tex_blend_opacity', 1.0)
+                if args.tex_method3_voronoi:
+                    setattr(tex_args_for_generator, 'tex_m3_num_points', args.tex_m3_num_points if args.tex_m3_num_points is not None else 200)
+                    setattr(tex_args_for_generator, 'tex_m3_metric', args.tex_m3_metric if args.tex_m3_metric is not None else "F1")
+                    setattr(tex_args_for_generator, 'tex_m3_color_source', args.tex_m3_color_source if args.tex_m3_color_source is not None else "distance")
+
+                # Method 4
+                setattr(tex_args_for_generator, 'tex_method4_glyph_dither', args.tex_method4_glyph_dither)
+                if args.tex_method4_glyph_dither:
+                    setattr(tex_args_for_generator, 'tex_m4_num_colors', args.tex_m4_num_colors if args.tex_m4_num_colors is not None else 8)
+                    setattr(tex_args_for_generator, 'tex_m4_glyph_size', args.tex_m4_glyph_size if args.tex_m4_glyph_size is not None else 10)
+                    setattr(tex_args_for_generator, 'tex_m4_glyph_style', args.tex_m4_glyph_style if args.tex_m4_glyph_style is not None else "random_dots")
+                    setattr(tex_args_for_generator, 'tex_m4_use_quantized_color_for_glyph_element', args.tex_m4_use_quantized_color_for_glyph_element) # action="store_true"
 
 
             # Build texture_gen_suffix_part based on tex_args_for_generator
-            if getattr(tex_args_for_generator, 'tex_max_megapixels', 0) > 0:
+            tex_max_mp_val = getattr(tex_args_for_generator, 'tex_max_megapixels', 0)
+            if tex_max_mp_val > 0:
                 w_tex_base, h_tex_base = texture_base_image_pil.size
-                if (w_tex_base * h_tex_base) / 1_000_000.0 > tex_args_for_generator.tex_max_megapixels:
-                     texture_gen_suffix_part += f"_texResize{tex_args_for_generator.tex_max_megapixels:.1f}MP"
+                if (w_tex_base * h_tex_base) / 1_000_000.0 > tex_max_mp_val:
+                     texture_gen_suffix_part += f"_texResize{tex_max_mp_val:.1f}MP"
             if getattr(tex_args_for_generator, 'tex_method1_color_dots', False): texture_gen_suffix_part += "_texM1"
             if getattr(tex_args_for_generator, 'tex_method2_density_size', False): texture_gen_suffix_part += "_texM2"
             if getattr(tex_args_for_generator, 'tex_method3_voronoi', False): texture_gen_suffix_part += "_texM3"
@@ -296,16 +314,17 @@ def main():
                 texture_to_use_pil = deeptexture.generate_texture_from_config(
                     texture_base_image_pil, tex_args_for_generator, verbose=True
                 )
-            elif not texture_gen_suffix_part: # No methods, no resize for texture
+            elif not texture_gen_suffix_part : # No methods, no resize for texture
+                 print("No specific on-the-fly texture methods or resize selected. Using texture base image directly.")
                  texture_to_use_pil = texture_base_image_pil 
-            else: # Only tex_resize was active
-                 texture_to_use_pil = deeptexture.resize_to_megapixels(texture_base_image_pil, tex_args_for_generator.tex_max_megapixels)
+            else: # Only tex_resize was active for texture base
+                 print("Only resize was applied to texture base image.")
+                 texture_to_use_pil = deeptexture.resize_to_megapixels(texture_base_image_pil, tex_max_mp_val)
             
             if args.save_generated_texture and texture_to_use_pil:
-                # Construct a filename for the generated texture similar to deeptexture standalone
                 gen_tex_output_base = os.path.splitext(os.path.basename(texture_base_image_source_path))[0]
                 gen_tex_filename = f"{gen_tex_output_base}{texture_gen_suffix_part}_gentex_{timestamp}.png"
-                gen_tex_save_path = os.path.join(args.output_dir, gen_tex_filename) # Save in main output dir
+                gen_tex_save_path = os.path.join(args.output_dir, gen_tex_filename) 
                 try: 
                     texture_to_use_pil.save(gen_tex_save_path); print(f"Saved on-the-fly generated texture to {gen_tex_save_path}")
                 except Exception as e: print(f"Error saving generated texture: {e}")
@@ -314,15 +333,15 @@ def main():
     
     filename_suffix += texture_gen_suffix_part
 
-    if texture_to_use_pil is None: # If not generated, or generation failed
-        if args.texture: # Fallback to --texture file
+    if texture_to_use_pil is None: 
+        if args.texture: 
             try:
                 print(f"Loading texture from file: {args.texture}")
                 texture_to_use_pil = Image.open(args.texture).convert('RGB')
                 filename_suffix += "_fileTex"
             except FileNotFoundError: print(f"Error: Texture file '{args.texture}' not found."); return
             except Exception as e: print(f"Error opening texture file: {e}"); return
-        else: # Final fallback: default random noise
+        else: 
             print("Warning: No texture source defined or successfully generated. Creating default random noise texture.")
             w_fb, h_fb = generated_depth_map_pil.size; noise_data = np.random.randint(0, 256, (h_fb, w_fb, 3), dtype=np.uint8)
             texture_to_use_pil = Image.fromarray(noise_data)
