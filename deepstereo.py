@@ -55,6 +55,64 @@ def apply_texture_transforms(image_pil, rotate_degrees=0, grid_rows=0, grid_cols
         transform_suffix += "_invC"
     return transformed_image, transform_suffix
 
+# --- Input Transform Function ---
+def transform_input_for_texture(image_pil, hex_color, darken_factor=0.3, blur_radius=5, verbose=True):
+    """
+    Transform the input image into a texture by:
+    1. Converting to grayscale
+    2. Colorizing with the specified hex color
+    3. Darkening the result
+    4. Applying blur
+    
+    Args:
+        image_pil: Input PIL Image
+        hex_color: Hex color string (e.g., "#FF0000" or "FF0000")
+        darken_factor: How much to darken (0.0 = black, 1.0 = no change)
+        blur_radius: Gaussian blur radius
+    """
+    if verbose: print(f"Input Transform: Creating texture from input with color {hex_color}")
+    
+    # Parse hex color
+    try:
+        if not hex_color.startswith('#'):
+            hex_color = '#' + hex_color
+        target_color = ImageColor.getrgb(hex_color)
+    except ValueError:
+        if verbose: print(f"Warning: Invalid hex color '{hex_color}'. Using dark blue (#000080).")
+        target_color = (0, 0, 128)
+    
+    # Step 1: Convert to grayscale
+    gray_img = image_pil.convert('L')
+    
+    # Step 2: Colorize
+    # Create a colored version by using the grayscale as alpha for the target color
+    colored_img = Image.new('RGB', gray_img.size)
+    
+    # For each pixel, blend between black and target color based on grayscale value
+    width, height = gray_img.size
+    gray_pixels = gray_img.load()
+    colored_pixels = colored_img.load()
+    
+    for y in range(height):
+        for x in range(width):
+            gray_value = gray_pixels[x, y] / 255.0  # Normalize to 0-1
+            # Blend between black and target color
+            colored_pixels[x, y] = tuple(int(gray_value * c) for c in target_color)
+    
+    # Step 3: Darken
+    if darken_factor < 1.0:
+        if verbose: print(f"Input Transform: Darkening by factor {darken_factor}")
+        # Create a black image and blend
+        black_img = Image.new('RGB', colored_img.size, (0, 0, 0))
+        colored_img = Image.blend(black_img, colored_img, darken_factor)
+    
+    # Step 4: Apply blur
+    if blur_radius > 0:
+        if verbose: print(f"Input Transform: Applying blur with radius {blur_radius}")
+        colored_img = colored_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    
+    return colored_img
+
 # --- Texture Preprocessing Function ---
 def prepare_texture_for_stereogram(texture_pil, min_sep, max_sep, verbose=True):
     """
@@ -343,6 +401,7 @@ def main():
     texture_source_group.add_argument("--texture_base_image_path", default=None, help="Optional path to a different image to use as the base for on-the-fly texture generation. If None, uses the main --input image.")
     texture_source_group.add_argument("--save_generated_texture", action="store_true", help="If true, saves the on-the-fly generated texture using default naming rules in --output_dir.")
     texture_source_group.add_argument("--tex_input_raw", action="store_true", help="For on-the-fly gen: use the (resized) texture base image directly, bypassing M1-M4 methods, before final transforms.")
+    texture_source_group.add_argument("--tex_transform_input", type=str, default=None, help="Transform input image to dark colored texture using hex color (e.g., '#0000FF' for dark blue). Overrides other texture options.")
     texture_source_group.add_argument("--tex_rotate", type=int, default=0, help="Rotate final texture by DEGREES (0-359). Applied after generation/loading.")
     texture_source_group.add_argument("--tex_grid", type=str, default="0,0", help="Create a ROWS,COLS grid from the final texture. E.g., '2,2'. Applied after rotate.")
     texture_source_group.add_argument("--tex_invert_colors", action="store_true", help="Invert colors of the final texture. Applied after grid.")
@@ -453,9 +512,42 @@ def main():
     texture_gen_suffix_part = "" # Suffix for texture generation steps
     final_transform_suffix_part = "" # Suffix for final texture transforms (rotate, grid, invert)
     
-    should_generate_texture_methods = args.generate_texture_on_the_fly or (not args.texture)
-
-    if should_generate_texture_methods:
+    # Check if user wants to transform input to texture
+    if args.tex_transform_input:
+        print(f"Creating texture from transformed input with color {args.tex_transform_input}...")
+        try:
+            # Load the texture base image
+            texture_base_for_transform = Image.open(texture_base_image_source_path).convert("RGB")
+            # Transform it
+            texture_to_use_pil = transform_input_for_texture(
+                texture_base_for_transform, 
+                args.tex_transform_input,
+                darken_factor=0.3,  # Darken to 30% of original
+                blur_radius=5,
+                verbose=verbose_main
+            )
+            # Clean up the hex color for filename
+            hex_clean = args.tex_transform_input.replace('#', '').upper()
+            texture_gen_suffix_part = f"_texTransform{hex_clean}"
+            
+            # Save if requested
+            if args.save_generated_texture and texture_to_use_pil:
+                gen_tex_output_base = os.path.splitext(os.path.basename(texture_base_image_source_path))[0]
+                gen_tex_filename = f"{gen_tex_output_base}{texture_gen_suffix_part}_gentex_{timestamp}.png"
+                gen_tex_save_path = os.path.join(args.output_dir, gen_tex_filename)
+                try:
+                    texture_to_use_pil.save(gen_tex_save_path)
+                    print(f"Saved transformed texture to {gen_tex_save_path}")
+                except Exception as e:
+                    print(f"Error saving transformed texture: {e}")
+                    
+        except Exception as e:
+            print(f"Error creating transformed texture: {e}")
+            texture_to_use_pil = None
+    
+    # Only proceed with other texture methods if tex_transform_input wasn't used
+    elif args.generate_texture_on_the_fly or (not args.texture):
+        should_generate_texture_methods = True
         print("Preparing for on-the-fly texture processing...")
         try:
             texture_base_image_pil = Image.open(texture_base_image_source_path).convert("RGB")
@@ -581,6 +673,18 @@ def main():
                 except Exception as e: print(f"Error saving generated texture: {e}")
         else:
             print("Could not prepare base image for on-the-fly texture generation.")
+    
+    # Apply final transforms to all textures (including tex_transform_input)
+    if texture_to_use_pil and not args.tex_transform_input:  # Don't double-transform if using tex_transform_input
+        try:
+            grid_r_str, grid_c_str = args.tex_grid.split(',')
+            grid_r, grid_c = int(grid_r_str), int(grid_c_str)
+        except ValueError:
+            if verbose_main: print(f"Warning: Invalid format for --tex_grid '{args.tex_grid}'. Disabling grid."); grid_r, grid_c = 0,0
+        texture_to_use_pil, extra_transform_suffix = apply_texture_transforms(
+            texture_to_use_pil, args.tex_rotate, grid_r, grid_c, args.tex_invert_colors
+        )
+        final_transform_suffix_part = extra_transform_suffix
     
     filename_suffix += texture_gen_suffix_part + final_transform_suffix_part # Add all texture processing suffixes
 
