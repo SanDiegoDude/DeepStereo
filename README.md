@@ -6,8 +6,6 @@ This allows you to turn almost any photograph into a 3D hidden image stereogram 
 
 ![image](https://github.com/user-attachments/assets/a08ebb8f-0301-4e17-bb23-bfed131dd1df)
 
-
-
 ## Features
 
 ### Core Features
@@ -26,7 +24,11 @@ This allows you to turn almost any photograph into a 3D hidden image stereogram 
     - **Method 2:** Density/size-driven patterns based on image brightness
     - **Method 3:** Voronoi/Worley noise patterns
     - **Method 4:** Stylized dithering with glyphs
+*   **Quick Texture Options:**
+    - **Transform Input:** Create hazy color overlays from input image (`--tex_transform_input`)
+    - **Random Noise:** Use random RGB noise pattern (`--tex_rand_noise`)
 *   **Texture Transforms:** Rotate, grid, and invert colors of any texture
+*   **Texture Handling:** Choose to tile or stretch textures to fit (`--tex_stretch_input`)
 *   **Custom Textures:** Use any image as a repeating texture for the stereogram
 *   **Standalone Texture Generator:** Use `deeptexture.py` separately to create textures
 
@@ -97,6 +99,23 @@ Generate a stereogram using default settings:
 python deepstereo.py --input path/to/your/image.jpg
 ```
 
+### Quick Start Examples
+
+**Transform input to hazy blue texture:**
+```bash
+python deepstereo.py --input image.jpg --tex_transform_input "#4169E1"
+```
+
+**Use random noise texture (surprisingly effective!):**
+```bash
+python deepstereo.py --input image.jpg --tex_rand_noise
+```
+
+**Stretch texture to fit instead of tiling:**
+```bash
+python deepstereo.py --input image.jpg --texture small_texture.jpg --tex_stretch_input
+```
+
 ### Using Different Stereogram Algorithms
 
 **Standard Algorithm (default):**
@@ -117,6 +136,23 @@ python deepstereo.py --input image.jpg --tex_alt_layer
 **Random Dot Stereogram:**
 ```bash
 python deepstereo.py --input image.jpg --tex_alt_rds --dot_density 0.6
+```
+
+### Color Transform Examples
+
+Create stereograms with different color moods:
+```bash
+# Deep red mood
+python deepstereo.py --input sunset.jpg --tex_transform_input "#8B0000"
+
+# Ocean blue
+python deepstereo.py --input beach.jpg --tex_transform_input "#006994"
+
+# Forest green  
+python deepstereo.py --input forest.jpg --tex_transform_input "#228B22"
+
+# Purple haze
+python deepstereo.py --input mountain.jpg --tex_transform_input "#663399"
 ```
 
 ### Using Custom Textures
@@ -196,6 +232,9 @@ python deeptexture.py --input source_image.jpg --tex_method1_color_dots --tex_m1
 
 ### Texture Options
 - `--texture`: Path to external texture image
+- `--tex_transform_input`: Transform input to colored texture (hex color, e.g., "#0000FF")
+- `--tex_rand_noise`: Use random RGB noise as texture
+- `--tex_stretch_input`: Stretch texture to fit image size (no tiling)
 - `--generate_texture_on_the_fly`: Force texture generation from input
 - `--tex_input_raw`: Use raw input image as texture
 - `--tex_rotate`: Rotate texture (degrees)
@@ -208,20 +247,20 @@ See `python deepstereo.py --help` for full list of texture generation options in
 ## Tips for Best Results
 
 1. **Input Images:** High-contrast images with clear foreground/background separation work best
-2. **Texture Choice:** For standard algorithms, use textures that tile well. For RDS, no texture needed
-3. **Viewing:** Cross your eyes or look "through" the image to see the 3D effect
-4. **Depth Models:** DPT_Large provides the best depth maps but is slower than MiDaS_small
-5. **Separation Values:** Adjust `--minsep` and `--maxsep` based on your viewing distance and image size
-
-## Examples Gallery
-
-Check the `examples/` directory for sample outputs and the commands used to generate them.
+2. **Quick Textures:** Try `--tex_transform_input` with different colors or `--tex_rand_noise` for instant results
+3. **Large Images:** Use `--tex_stretch_input` if your texture is smaller than your input to avoid tiling
+4. **Color Choice:** For `--tex_transform_input`, use medium-dark colors (not too bright, not too dark)
+5. **Viewing:** Cross your eyes or look "through" the image to see the 3D effect
+6. **Depth Models:** DPT_Large provides the best depth maps but is slower than MiDaS_small
+7. **Separation Values:** Adjust `--minsep` and `--maxsep` based on your viewing distance and image size
 
 ## Troubleshooting
 
 - **CUDA Out of Memory:** Use `--midasmodel MiDaS_small` or reduce `--depth_model_input_width`
 - **Can't see 3D effect:** Try adjusting `--minsep` and `--maxsep` values
-- **Repetitive patterns:** Use `--tex_alt_layer` or `--tex_alt_rds` for better results
+- **Repetitive patterns:** Use `--tex_alt_layer`, `--tex_alt_rds`, or `--tex_stretch_input`
+- **Texture too dark:** When using `--tex_transform_input`, try brighter hex colors
+- **Tiling artifacts:** Add `--tex_stretch_input` to stretch texture instead of tiling
 
 ## License
 
@@ -231,3 +270,4 @@ This project is open source. See LICENSE file for details.
 
 - Intel ISL for the MiDaS depth estimation models
 - The computer vision community for stereogram algorithms
+- Magic Eye Inc. for popularizing autostereograms
