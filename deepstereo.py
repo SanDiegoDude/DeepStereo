@@ -417,6 +417,7 @@ def main():
     texture_source_group.add_argument("--tex_input_raw", action="store_true", help="For on-the-fly gen: use the (resized) texture base image directly, bypassing M1-M4 methods, before final transforms.")
     texture_source_group.add_argument("--tex_transform_input", type=str, default=None, help="Transform input image to dark colored texture using hex color (e.g., '#0000FF' for dark blue). Overrides other texture options.")
     texture_source_group.add_argument("--tex_rand_noise", action="store_true", help="Use random RGB noise as texture (surprisingly effective!).")
+    texture_source_group.add_argument("--tex_stretch_input", action="store_true", help="Stretch texture to fit image size instead of tiling.")
     texture_source_group.add_argument("--tex_rotate", type=int, default=0, help="Rotate final texture by DEGREES (0-359). Applied after generation/loading.")
     texture_source_group.add_argument("--tex_grid", type=str, default="0,0", help="Create a ROWS,COLS grid from the final texture. E.g., '2,2'. Applied after rotate.")
     texture_source_group.add_argument("--tex_invert_colors", action="store_true", help="Invert colors of the final texture. Applied after grid.")
@@ -743,6 +744,12 @@ def main():
 
     if not texture_to_use_pil: print("Critical error: Texture could not be prepared. Exiting."); return
 
+    # Stretch texture if requested
+    if args.tex_stretch_input and texture_to_use_pil.size != generated_depth_map_pil.size:
+        print(f"Stretching texture from {texture_to_use_pil.size} to match image size {generated_depth_map_pil.size}")
+        texture_to_use_pil = texture_to_use_pil.resize(generated_depth_map_pil.size, Image.Resampling.LANCZOS)
+        filename_suffix += "_stretched"
+    
     # Determine which algorithm to use
     if args.tex_alt_layer:
         filename_suffix += "_layerAlgo"
